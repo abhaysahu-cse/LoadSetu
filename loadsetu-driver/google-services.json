@@ -1,0 +1,31 @@
+{
+  "_README": "REPLACE THIS FILE with your real google-services.json from Firebase Console.",
+  "_STEPS": [
+    "1. Go to https://console.firebase.google.com",
+    "2. Create project → Add Android app → package: in.loadsetu.driver",
+    "3. Download google-services.json",
+    "4. Replace this file with the downloaded one"
+  ],
+  "project_info": {
+    "project_number": "REPLACE_ME",
+    "project_id": "REPLACE_ME",
+    "storage_bucket": "REPLACE_ME"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "REPLACE_ME",
+        "android_client_info": {
+          "package_name": "in.loadsetu.driver"
+        }
+      },
+      "api_key": [{ "current_key": "REPLACE_ME" }],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,163 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: vahansync-core
+
+  # ─── Neon Cloud PostgreSQL + PostGIS ────────────────────────────────────────
+  datasource:
+    # url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:vahansync_db}?sslmode=require
+    url: jdbc:postgresql://localhost:5433/vahansync_db
+    username: vahansync
+    password: vahansync_secret
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc.lob.non_contextual_creation: true
+        default_schema: public
+
+  # ─── Upstash Cloud Redis (SSL — rediss://) ──────────────────────────────────
+  # MODULE 8: timeout=2000ms — triggers fail-open if Upstash is unreachable
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: 
+      ssl:
+        enabled: false   # true for Upstash (rediss://), false for local Docker
+      timeout: 2000ms
+      connect-timeout: 1000ms
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 1000ms
+
+  # ─── Local Docker Kafka ──────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    admin:
+      auto-create: false            # All topics must be pre-created via scripts
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 1
+    consumer:
+      group-id: vahansync-core-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.loadsetu.vahansync.dto"
+
+# ─── JWT ─────────────────────────────────────────────────────────────────────
+jwt:
+  secret: ${JWT_SECRET:REPLACE_WITH_512_BIT_BASE64_SECRET_IN_PRODUCTION}
+  expiration-ms: 86400000
+
+# ─── Kafka Topics ─────────────────────────────────────────────────────────────
+kafka:
+  topics:
+    booking-events: booking-events
+    truck-telemetry-events: truck-telemetry-events
+    load-status-events: load-status-events
+
+# ─── MODULE 3: Internal AI Microservice Secret ────────────────────────────────
+# Python FastAPI service must send this in X-INTERNAL-SECRET header.
+# Rotate via environment variable — never commit the real value.
+loadsetu:
+  internal:
+    api-secret: ${INTERNAL_API_SECRET:REPLACE_THIS_SECRET_IN_PRODUCTION}
+  matching:
+    radius-km: 50
+    shadow-ban:
+      deprioritize-threshold: 3
+      hard-block-threshold: 5
+  ulip:
+    base-url: ${ULIP_BASE_URL:https://ulip.dpiit.gov.in/ulip}
+    api-key: ${ULIP_API_KEY:mock-key}
+    mock-enabled: ${ULIP_MOCK:true}
+  outbox:
+    max-retries: 5
+    initial-backoff-seconds: 30
+
+  payment:
+    razorpay:
+      key-id: ${RAZORPAY_KEY_ID:mock}
+      key-secret: ${RAZORPAY_KEY_SECRET:mock}
+    mock-enabled: ${PAYMENT_MOCK:true}   # Set false + add Razorpay creds for live payments
+
+# ─── MODULE 6: Rate Limiting ──────────────────────────────────────────────────
+rate-limit:
+  loads-match:
+    capacity: 5
+    refill-seconds: 10
+  public-api:
+    capacity: 20
+    refill-seconds: 60
+
+# ─── Resilience4j Circuit Breakers ───────────────────────────────────────────
+resilience4j:
+  circuitbreaker:
+    instances:
+      ulipService:
+        register-health-indicator: true
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        slow-call-duration-threshold: 3s
+        slow-call-rate-threshold: 80
+      paymentGateway:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 40
+        wait-duration-in-open-state: 60s
+  retry:
+    instances:
+      ulipService:
+        max-attempts: 3
+        wait-duration: 1s
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - java.io.IOException
+          - java.net.SocketTimeoutException
+      paymentGateway:
+        max-attempts: 2
+        wait-duration: 500ms
+
+# ─── Actuator ────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,circuitbreakers
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# ─── Logging ─────────────────────────────────────────────────────────────────
+logging:
+  level:
+    root: INFO
+    com.loadsetu: DEBUG
+    org.hibernate.SQL: WARN
+    io.github.resilience4j: INFO

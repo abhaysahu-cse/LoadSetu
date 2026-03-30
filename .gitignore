@@ -1,0 +1,42 @@
+﻿# ======================
+# Python
+# ======================
+.venv/
+env/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+
+# ======================
+# Node / React
+# ======================
+node_modules/
+dist/
+.npm
+*.log
+
+# ======================
+# Databases & Secrets
+# ======================
+.env
+*.sql
+postgresql*.txt
+
+# ======================
+# IDEs
+# ======================
+.vscode/
+.idea/
+
+# ======================
+# OS / Junk
+# ======================
+.DS_Store
+Thumbs.db
+
+# ======================
+# Backups
+# ======================
+very-old-backup-versions/
+*.backup
