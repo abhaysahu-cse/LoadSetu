@@ -166,7 +166,7 @@ class TruckTelemetryConsumer:
             "bootstrap_servers": "localhost:9092",
             "group_id": "vahansync-ml-consumer",
             "auto_offset_reset": settings.KAFKA_AUTO_OFFSET_RESET,
-            "value_deserializer": lambda v: json.loads(v.decode("utf-8")),
+            # NO value_deserializer — we deserialize manually for fault tolerance
             "enable_auto_commit": True,
             "auto_commit_interval_ms": 1000,
             "session_timeout_ms": 30000,
@@ -202,15 +202,62 @@ class TruckTelemetryConsumer:
             self._consumer = None
         logger.info("Telemetry consumer stopped")
 
+    @staticmethod
+    def _safe_deserialize(raw: bytes) -> Optional[dict[str, Any]]:
+        """
+        Fault-tolerant JSON deserializer.
+        Returns None for empty, non-UTF8, or invalid JSON payloads.
+        """
+        if not raw:
+            return None
+        try:
+            text = raw.decode("utf-8").strip()
+        except (UnicodeDecodeError, AttributeError):
+            logger.warning("⚠️ Skipped non-UTF8 message (%d bytes)", len(raw))
+            return None
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+            if not isinstance(parsed, dict):
+                logger.warning("⚠️ Skipped non-object JSON: %s", type(parsed).__name__)
+                return None
+        except json.JSONDecodeError:
+            logger.warning("⚠️ Skipped invalid JSON: %s", text[:120])
+            return None
+
+        # Schema enforcement — reject incomplete telemetry before it enters the pipeline
+        _REQUIRED_FIELDS = ("truck_id", "lat", "lng", "status")
+        if not all(f in parsed for f in _REQUIRED_FIELDS):
+            logger.warning("⚠️ Invalid telemetry payload dropped (missing fields): %s", parsed)
+            return None
+        if not isinstance(parsed.get("lat"), (int, float)) or not isinstance(parsed.get("lng"), (int, float)):
+            logger.warning("⚠️ Invalid coordinates dropped: lat=%s lng=%s", parsed.get("lat"), parsed.get("lng"))
+            return None
+
+        return parsed
+
     async def _consume_loop(self) -> None:
-        """Main message loop — runs until _running is False."""
+        """Main message loop — runs until _running is False. Never crashes on bad data."""
         redis = await get_redis()
+        skipped = 0
+        processed = 0
         while self._running:
             try:
                 async for message in self._consumer:
                     if not self._running:
                         break
-                    await self._process_telemetry(message.value, redis)
+                    payload = self._safe_deserialize(message.value)
+                    if payload is None:
+                        skipped += 1
+                        if skipped % 50 == 1:
+                            logger.warning(
+                                "⚠️ Bad messages skipped so far: %d (processed: %d)",
+                                skipped, processed,
+                            )
+                        continue
+                    await self._process_telemetry(payload, redis)
+                    processed += 1
             except KafkaError as exc:
                 logger.error("Kafka consumer error: %s — retrying in 5s", exc)
                 await asyncio.sleep(5)
@@ -247,27 +294,30 @@ class TruckTelemetryConsumer:
             return
 
         try:
-            location_key = f"truck:{event.truck_id}"
-            old_cell = await redis.get(f"truck:{event.truck_id}:h3")
+            status_str = event.status.value if isinstance(event.status, TruckStatus) else str(event.status)
+            ts_iso = event.timestamp.isoformat() if event.timestamp else datetime.utcnow().isoformat()
+            ttl_seconds = 1800  # 30 min — refreshed on every telemetry ping
 
             pipe = redis.pipeline()
+
+            # ── Final production schema (Java-compatible) ──────────────
+            # Java reads: GET  truck:h3:{truckId}  → cell value (STRING)
+            #             HGETALL truck:location:{truckId} → lat, lng, status, last_updated
+            pipe.set(f"truck:h3:{event.truck_id}", cell, ex=ttl_seconds)
             pipe.hset(
-                location_key,
+                f"truck:location:{event.truck_id}",
                 mapping={
                     "lat": str(event.lat),
                     "lng": str(event.lng),
-                    "status": event.status.value,
-                    "last_updated": event.timestamp.isoformat(),
+                    "status": status_str,
+                    "last_updated": ts_iso,
                 },
             )
+            pipe.expire(f"truck:location:{event.truck_id}", ttl_seconds)
 
-            if old_cell:
-                pipe.srem(f"trucks:h3:{old_cell}", event.truck_id)
-
-            pipe.set(f"truck:{event.truck_id}:h3", cell)
-            pipe.sadd(f"trucks:h3:{cell}", event.truck_id)
             await pipe.execute()
-            logger.info("📍 Truck %s indexed in H3 %s", event.truck_id, cell)
+            # TEMP: sanity log — remove once stable in production
+            print(f"🧠 Stored truck:{event.truck_id} → H3:{cell} status={status_str}")
         except Exception as exc:
             logger.error("❌ Failed to process telemetry: %s", exc)
 

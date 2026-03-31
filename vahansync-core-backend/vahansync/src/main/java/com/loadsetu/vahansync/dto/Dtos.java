@@ -110,6 +110,7 @@ public final class Dtos {
 
     @Data @NoArgsConstructor @AllArgsConstructor @Builder
     public static class MatchCandidate {
+        @JsonProperty("truck_id")         private String     truckId;
         @JsonProperty("load_id")          private UUID       loadId;
         private String origin;
         private String destination;

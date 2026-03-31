@@ -3,6 +3,7 @@ package com.loadsetu.vahansync.consumer;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.loadsetu.vahansync.dto.Dtos;
+import com.loadsetu.vahansync.service.LoadClusterService;
 import com.loadsetu.vahansync.service.MatchingEngineService;
 import com.loadsetu.vahansync.service.RedisService;
 import org.slf4j.Logger;
@@ -33,6 +34,7 @@ public class LoadMatchingConsumer {
     private final ObjectMapper objectMapper;
     private final MatchingEngineService matchingEngineService;
     private final RedisService redisService;
+    private final LoadClusterService loadClusterService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     @Value("${loadsetu.matching.radius-km:50}")
@@ -42,11 +44,13 @@ public class LoadMatchingConsumer {
             ObjectMapper objectMapper,
             MatchingEngineService matchingEngineService,
             RedisService redisService,
+            LoadClusterService loadClusterService,
             KafkaTemplate<String, Object> kafkaTemplate
     ) {
         this.objectMapper = objectMapper;
         this.matchingEngineService = matchingEngineService;
         this.redisService = redisService;
+        this.loadClusterService = loadClusterService;
         this.kafkaTemplate = kafkaTemplate;
     }
 
@@ -57,6 +61,7 @@ public class LoadMatchingConsumer {
         containerFactory = "stringKafkaListenerContainerFactory"
     )
     public void consumeLoadEvent(String payload) {
+        long t0 = System.nanoTime();
         LoadEvent event = parseEvent(payload);
         if (event == null || event.loadId() == null || event.pickupLat() == null || event.pickupLng() == null) {
             log.warn("Load matching event dropped: {}", payload);
@@ -64,20 +69,46 @@ public class LoadMatchingConsumer {
         }
 
         try {
+            // Index load for clustering (non-blocking, best-effort)
+            loadClusterService.indexLoad(event.loadId(), event.pickupLat(), event.pickupLng());
+
+            long t1 = System.nanoTime();
             List<String> h3Indexes = expandH3Ring(event.pickupLat(), event.pickupLng());
+            long t2 = System.nanoTime();
+
             List<MatchingEngineService.TruckState> nearbyTrucks = loadTruckStates(
                 event.pickupLat(),
                 event.pickupLng(),
                 h3Indexes);
+            long t3 = System.nanoTime();
+
             List<Dtos.MatchCandidate> matches = matchingEngineService.findBestMatches(
                     event.pickupLat(),
                     event.pickupLng(),
                     nearbyTrucks,
                     event.loadId());
+            long t4 = System.nanoTime();
+
+            // Surface nearby clustered loads for multi-load opportunities
+            List<String> nearbyLoadIds = loadClusterService.findNearbyLoadIds(
+                    event.pickupLat(), event.pickupLng());
+
             publishMatches(event.loadId(), matches);
+            long t5 = System.nanoTime();
+
+            // Performance telemetry
+            log.info("⚡ Match cycle load={} | trucks_found={} matches={} nearby_loads={} | "
+                    + "h3={}ms redis={}ms scoring={}ms publish={}ms total={}ms",
+                    event.loadId(),
+                    nearbyTrucks.size(), matches.size(), nearbyLoadIds.size(),
+                    ms(t2 - t1), ms(t3 - t2), ms(t4 - t3), ms(t5 - t4), ms(t5 - t0));
         } catch (Exception ex) {
             log.error("Load matching failed for load={}: {}", event.loadId(), ex.getMessage(), ex);
         }
+    }
+
+    private static double ms(long nanos) {
+        return Math.round(nanos / 1_000_000.0 * 100.0) / 100.0;
     }
 
     private LoadEvent parseEvent(String payload) {

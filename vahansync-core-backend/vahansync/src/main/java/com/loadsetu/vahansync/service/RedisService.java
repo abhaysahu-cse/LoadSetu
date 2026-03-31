@@ -5,6 +5,7 @@ import com.loadsetu.vahansync.repository.TruckRepository;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -108,12 +109,15 @@ public class RedisService {
                 status = truck.getStatus().name().toLowerCase(Locale.ROOT);
             }
 
+            Instant lastUpdated = parseInstant(locationData.get("last_updated"));
+
             truckStates.add(new MatchingEngineService.TruckState(
                     truckId,
                     parseDouble(locationData.get("lat")),
                     parseDouble(locationData.get("lng")),
                     status,
-                    noShowCount
+                    noShowCount,
+                    lastUpdated
             ));
         }
         return truckStates;
@@ -141,6 +145,15 @@ public class RedisService {
 
     private String stringValue(Object value) {
         return value == null ? "" : String.valueOf(value);
+    }
+
+    private Instant parseInstant(Object value) {
+        if (value == null) return null;
+        try {
+            return Instant.parse(String.valueOf(value));
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     private double haversineKm(double originLat, double originLng, double targetLat, double targetLng) {
