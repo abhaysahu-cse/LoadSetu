@@ -160,9 +160,12 @@ export interface PricingLogEntry {
 export function useFleetTrucks(options?: Partial<UseQueryOptions<Truck[]>>) {
   return useQuery<Truck[]>({
     queryKey: qk.trucks,
-    queryFn: async () => [],
-    staleTime: Infinity,
-    refetchInterval: false,
+    queryFn: async () => {
+      const res = await get<{ count: number; trucks: Truck[] }>(aiClient, "/api/v1/admin/trucks/live");
+      return res.trucks;
+    },
+    staleTime: 10_000,
+    refetchInterval: 15_000,
     ...options,
   });
 }
@@ -200,6 +203,7 @@ export function useBookLoad() {
   });
 }
 
+// TODO: Wire to real analytics endpoint when backend supports it
 export function useAnalytics(range: "7d" | "30d" | "90d" = "30d") {
   return useQuery<AnalyticsData>({
     queryKey: qk.analytics(range),
@@ -217,6 +221,7 @@ export function useAnalytics(range: "7d" | "30d" | "90d" = "30d") {
   });
 }
 
+// TODO: Wire to real pricing logs endpoint when backend supports it
 export function usePricingLogs() {
   return useQuery<PricingLogEntry[]>({
     queryKey: qk.pricingLogs,
@@ -225,6 +230,7 @@ export function usePricingLogs() {
   });
 }
 
+// TODO: Wire to real demand heatmap endpoint when backend supports it
 export function useDemandHeatmap() {
   return useQuery<DemandHeatmapCell[]>({
     queryKey: qk.demand,
@@ -234,6 +240,7 @@ export function useDemandHeatmap() {
   });
 }
 
+// TODO: Wire to real H3 heatmap endpoint when backend supports it
 export function useH3Heatmap() {
   return useQuery<H3HeatmapCell[]>({
     queryKey: qk.h3Heatmap,
@@ -271,6 +278,7 @@ export function useMe() {
   });
 }
 
+// Dry-run is client-side validation only; real ingest uses useBulkIngestConfirm
 export function useBulkIngestDryRun() {
   return useMutation<{ rows: BulkLoadRow[] }, Error, BulkLoadRow[]>({
     mutationFn: async (rows) => ({ rows }),

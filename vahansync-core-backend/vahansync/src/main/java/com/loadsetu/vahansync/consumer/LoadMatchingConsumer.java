@@ -75,12 +75,27 @@ public class LoadMatchingConsumer {
             long t1 = System.nanoTime();
             List<String> h3Indexes = expandH3Ring(event.pickupLat(), event.pickupLng());
             long t2 = System.nanoTime();
+            log.info("🔍 H3 ring for ({}, {}): {} indexes: {}", event.pickupLat(), event.pickupLng(), h3Indexes.size(), h3Indexes);
 
             List<MatchingEngineService.TruckState> nearbyTrucks = loadTruckStates(
                 event.pickupLat(),
                 event.pickupLng(),
                 h3Indexes);
             long t3 = System.nanoTime();
+            log.info("🚛 Nearby trucks found: {} (h3Indexes={}, fallback={})",
+                    nearbyTrucks.size(), h3Indexes.size(), h3Indexes.isEmpty() ? "YES" : "NO");
+            if (nearbyTrucks.isEmpty()) {
+                log.warn("⚠️ ZERO trucks found for load={} at ({}, {}) — check Redis keys and H3 cells",
+                        event.loadId(), event.pickupLat(), event.pickupLng());
+            } else {
+                log.info("🚛 Sample trucks (first 5): {}",
+                        nearbyTrucks.stream().limit(5)
+                                .map(t -> t.truckId() + "[" + t.status() + ",age=" +
+                                        (t.lastUpdated() != null
+                                                ? java.time.Duration.between(t.lastUpdated(), Instant.now()).getSeconds() + "s"
+                                                : "null") + "]")
+                                .toList());
+            }
 
             List<Dtos.MatchCandidate> matches = matchingEngineService.findBestMatches(
                     event.pickupLat(),
@@ -92,6 +107,11 @@ public class LoadMatchingConsumer {
             // Surface nearby clustered loads for multi-load opportunities
             List<String> nearbyLoadIds = loadClusterService.findNearbyLoadIds(
                     event.pickupLat(), event.pickupLng());
+
+            if (matches.isEmpty()) {
+                log.warn("⚠️ ZERO matches after scoring for load={} (nearby_trucks={}) — check eligibility/staleness",
+                        event.loadId(), nearbyTrucks.size());
+            }
 
             publishMatches(event.loadId(), matches);
             long t5 = System.nanoTime();

@@ -316,6 +316,24 @@ class TruckTelemetryConsumer:
             pipe.expire(f"truck:location:{event.truck_id}", ttl_seconds)
 
             await pipe.execute()
+
+            # ── DEBUG: periodic Redis inventory ──────────────────────────
+            import random as _rng
+            if _rng.random() < 0.01:  # ~1% of pings — avoid log flood
+                try:
+                    h3_count = 0
+                    loc_count = 0
+                    async for _k in redis.scan_iter(match="truck:h3:*", count=1000):
+                        h3_count += 1
+                    async for _k in redis.scan_iter(match="truck:location:*", count=1000):
+                        loc_count += 1
+                    logger.info(
+                        "📊 Redis inventory: truck:h3:*=%d  truck:location:*=%d",
+                        h3_count, loc_count,
+                    )
+                except Exception:
+                    pass
+
             # TEMP: sanity log — remove once stable in production
             print(f"🧠 Stored truck:{event.truck_id} → H3:{cell} status={status_str}")
         except Exception as exc:

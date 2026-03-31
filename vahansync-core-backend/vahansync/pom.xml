@@ -116,6 +116,13 @@
             <version>${hibernate-spatial.version}</version>
         </dependency>
 
+        <!-- ===== H3 Spatial Indexing ===== -->
+        <dependency>
+            <groupId>com.uber</groupId>
+            <artifactId>h3</artifactId>
+            <version>4.1.1</version>
+        </dependency>
+
         <!-- ===== KAFKA ===== -->
         <dependency>
             <groupId>org.springframework.kafka</groupId>

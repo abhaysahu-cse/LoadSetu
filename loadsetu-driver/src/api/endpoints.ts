@@ -321,6 +321,7 @@ export async function flushTelemetryBatch(payloads: TelemetryPayload[]): Promise
   await withRetry(() => fastapiClient.post('/api/v1/telemetry/batch', { pings: payloads }));
 }
 
+// TODO: Wire to real voice NLP endpoint when backend supports audio parsing
 export async function parseVoice(_audioUri: string, _mimeType: 'audio/aac' | 'audio/ogg'): Promise<VoiceIntentResponse> {
   return {
     intent: 'UNKNOWN',

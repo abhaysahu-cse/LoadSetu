@@ -64,9 +64,12 @@ class Settings(BaseSettings):
 
     # ── Kafka Topics ──────────────────────────────────────────────────────
     TOPIC_TRUCK_TELEMETRY: str = "truck-telemetry-events"
+    TOPIC_LOAD_EVENTS: str = "load-events"
+    TOPIC_LOAD_MATCHES: str = "load-matches"
     TOPIC_BOOKING_EVENTS: str = "booking-events"
     TOPIC_LOAD_STATUS: str = "load-status-events"
     TOPIC_WHATSAPP_INBOUND: str = "whatsapp-inbound-events"
+    ADMIN_EVENT_BUFFER_SIZE: int = 50
 
     # ── WhatsApp / Twilio ─────────────────────────────────────────────────
     TWILIO_ACCOUNT_SID: Optional[str] = None

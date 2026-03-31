@@ -5,6 +5,9 @@ import com.loadsetu.vahansync.repository.TruckRepository;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -19,6 +22,7 @@ import java.util.UUID;
 public class RedisService {
 
     private static final double EARTH_RADIUS_KM = 6371.0;
+    private static final Logger log = LoggerFactory.getLogger(RedisService.class);
 
     private final StringRedisTemplate redisTemplate;
     private final TruckRepository truckRepository;
@@ -30,24 +34,42 @@ public class RedisService {
 
     public List<MatchingEngineService.TruckState> findTruckStatesByH3Indexes(Collection<String> h3Indexes) {
         if (h3Indexes == null || h3Indexes.isEmpty()) {
+            log.debug("H3 index lookup skipped: h3Indexes is null/empty");
             return List.of();
         }
 
         try {
+            log.debug("H3 lookup: searching for cells in ring: {}", h3Indexes);
             Set<String> redisKeys = redisTemplate.keys("truck:h3:*");
             if (redisKeys == null || redisKeys.isEmpty()) {
+                log.warn("H3 lookup: no truck:h3:* keys found in Redis");
                 return List.of();
             }
+            log.debug("H3 lookup: found {} truck:h3:* keys in Redis", redisKeys.size());
 
             List<String> matchingTruckIds = new ArrayList<>();
+            int sampledCells = 0;
+            String sampleCell = null;
             for (String redisKey : redisKeys) {
                 String cell = redisTemplate.opsForValue().get(redisKey);
+                if (sampledCells < 3 && cell != null) {
+                    log.debug("H3 lookup sample: key={} cell={}", redisKey, cell);
+                    sampleCell = cell;
+                    sampledCells++;
+                }
                 if (cell != null && h3Indexes.contains(cell)) {
                     matchingTruckIds.add(extractTruckId(redisKey));
                 }
             }
+            log.info("H3 lookup: {} trucks matched out of {} scanned | wanted_cells={} sample_redis_cell={}",
+                    matchingTruckIds.size(), redisKeys.size(), h3Indexes, sampleCell);
+            if (!matchingTruckIds.isEmpty()) {
+                log.info("H3 matched truck IDs (first 10): {}",
+                        matchingTruckIds.subList(0, Math.min(10, matchingTruckIds.size())));
+            }
             return hydrateTruckStates(matchingTruckIds);
         } catch (Exception ex) {
+            log.error("H3 lookup failed: {}", ex.getMessage(), ex);
             return List.of();
         }
     }
@@ -60,17 +82,23 @@ public class RedisService {
         try {
             Set<String> redisKeys = redisTemplate.keys("truck:location:*");
             if (redisKeys == null || redisKeys.isEmpty()) {
+                log.warn("Radius lookup: no truck:location:* keys found in Redis");
                 return List.of();
             }
+            log.debug("Radius lookup: found {} truck:location:* keys", redisKeys.size());
 
             List<MatchingEngineService.TruckState> truckStates = hydrateTruckStates(
                     redisKeys.stream().map(this::extractTruckId).toList());
+            log.debug("Radius lookup: hydrated {} truck states", truckStates.size());
 
-            return truckStates.stream()
+            List<MatchingEngineService.TruckState> filtered = truckStates.stream()
                     .filter(truckState -> truckState.lat() != null && truckState.lng() != null)
                     .filter(truckState -> haversineKm(pickupLat, pickupLng, truckState.lat(), truckState.lng()) <= radiusKm)
                     .toList();
+            log.info("Radius lookup: {} trucks within {}km of ({}, {})", filtered.size(), radiusKm, pickupLat, pickupLng);
+            return filtered;
         } catch (Exception ex) {
+            log.error("Radius lookup failed: {}", ex.getMessage(), ex);
             return List.of();
         }
     }
@@ -90,15 +118,19 @@ public class RedisService {
             trucksById.put(truck.getId(), truck);
         }
 
+        int skippedNoUuid = 0;
+        int skippedNoLocation = 0;
         List<MatchingEngineService.TruckState> truckStates = new ArrayList<>();
         for (String truckId : truckIds) {
             UUID truckUuid = parseUuid(truckId);
             if (truckUuid == null) {
+                skippedNoUuid++;
                 continue;
             }
 
             Map<Object, Object> locationData = redisTemplate.opsForHash().entries("truck:location:" + truckId);
             if (locationData == null || locationData.isEmpty()) {
+                skippedNoLocation++;
                 continue;
             }
 
@@ -120,6 +152,8 @@ public class RedisService {
                     lastUpdated
             ));
         }
+        log.info("hydrateTruckStates: input={} hydrated={} skippedNoUuid={} skippedNoLocation={} foundInPostgres={}",
+                truckIds.size(), truckStates.size(), skippedNoUuid, skippedNoLocation, trucksById.size());
         return truckStates;
     }
 
@@ -152,7 +186,11 @@ public class RedisService {
         try {
             return Instant.parse(String.valueOf(value));
         } catch (Exception ex) {
-            return null;
+            try {
+                return java.time.OffsetDateTime.parse(String.valueOf(value)).toInstant();
+            } catch (Exception ex2) {
+                return null;
+            }
         }
     }
 

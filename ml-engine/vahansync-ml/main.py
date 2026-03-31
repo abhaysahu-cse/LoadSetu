@@ -32,7 +32,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from config.settings import get_settings
 from models.schemas import (
@@ -48,7 +48,19 @@ from models.schemas import (
     TruckTelemetryEvent,
     WhatsAppInboundMessage,
 )
+from models.stage5 import ForceMatchRequest
 from services.gemini_parser import GeminiIntentParser, get_gemini_parser
+from services.control_plane import (
+    collect_health_snapshot,
+    fetch_live_trucks,
+    get_control_plane_monitor,
+    parse_whatsapp_message,
+    persist_load_and_publish_event,
+    publish_whatsapp_event,
+    resolve_city,
+    shutdown_control_plane_monitor,
+    startup_control_plane_monitor,
+)
 from services.kafka_client import (
     VahanSyncProducer,
     get_producer,
@@ -103,6 +115,7 @@ async def lifespan(app: FastAPI):
     consumer_task: asyncio.Task | None = None
     try:
         await startup_kafka()
+        await startup_control_plane_monitor()
         consumer_task = asyncio.create_task(start_kafka_consumer())
         logger.info("Kafka + Redis initialised")
     except Exception as exc:
@@ -118,6 +131,7 @@ async def lifespan(app: FastAPI):
                 await consumer_task
             except asyncio.CancelledError:
                 pass
+        await shutdown_control_plane_monitor()
         await shutdown_kafka()
     except Exception as exc:
         logger.warning("Kafka shutdown error: %s", exc)
@@ -354,6 +368,159 @@ async def ingest_telemetry_batch(
         if ok:
             sent += 1
     return {"status": "queued", "count": sent}
+
+
+def _twiml_response(message: str) -> Response:
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f"<Response><Message>{message}</Message></Response>"
+    )
+    return Response(content=body, media_type="application/xml")
+
+
+@app.post("/api/v1/whatsapp/webhook", tags=["whatsapp"])
+async def whatsapp_stage5_webhook(
+    request: Request,
+    producer: VahanSyncProducer = Depends(get_producer),
+) -> Response:
+    try:
+        form = await request.form()
+        message_sid = str(form.get("MessageSid") or "unknown")
+        from_number = str(form.get("From") or "unknown")
+        body = str(form.get("Body") or "").strip()
+
+        logger.info(
+            "WhatsApp message received | sid=%s | from=%s | len=%d",
+            message_sid,
+            mask_phone(from_number),
+            len(body),
+        )
+
+        if not body:
+            logger.warning("WhatsApp message rejected | sid=%s | reason=empty", message_sid)
+            return _twiml_response(
+                "Message samajh nahi aaya. Try: 'Indore to Bhopal truck empty' or 'Need truck Bhopal to Nagpur 10 ton'."
+            )
+
+        parsed = parse_whatsapp_message(body)
+        logger.info(
+            "WhatsApp parsed | sid=%s | type=%s | origin=%s | destination=%s | weight=%s",
+            message_sid,
+            parsed.type,
+            parsed.origin,
+            parsed.destination,
+            parsed.weight_tons,
+        )
+
+        if parsed.type == "unknown" or not parsed.origin or not parsed.destination:
+            return _twiml_response(
+                "Format use karo: 'Indore to Bhopal truck empty' ya 'Need truck Bhopal to Nagpur 10 ton'."
+            )
+
+        published = await publish_whatsapp_event(parsed, from_number, producer, message_sid)
+        if published is None:
+            logger.warning(
+                "WhatsApp event rejected | sid=%s | type=%s | origin=%s",
+                message_sid,
+                parsed.type,
+                parsed.origin,
+            )
+            return _twiml_response(
+                "Route ya city samajh nahi aayi. Abhi supported cities: Bhopal, Indore, Jabalpur, Nagpur, Ujjain."
+            )
+
+        logger.info(
+            "WhatsApp Kafka event produced | sid=%s | topic=%s | key=%s | type=%s",
+            message_sid,
+            published.topic,
+            published.key,
+            parsed.type,
+        )
+
+        if parsed.type == "driver":
+            return _twiml_response(
+                f"Truck availability queued for {parsed.origin} to {parsed.destination}. Dispatch pipeline is live."
+            )
+        return _twiml_response(
+            f"Load posted for {parsed.origin} to {parsed.destination}. Matching engine will evaluate nearby trucks."
+        )
+    except Exception as exc:
+        logger.exception("WhatsApp webhook failure: %s", exc)
+        return _twiml_response("System busy hai. Thodi der baad try karo.")
+
+
+@app.get("/api/v1/admin/trucks/live", tags=["admin"])
+async def admin_live_trucks() -> dict[str, Any]:
+    trucks = await fetch_live_trucks()
+    return {"count": len(trucks), "trucks": trucks}
+
+
+@app.get("/api/v1/admin/load-events/recent", tags=["admin"])
+async def admin_recent_load_events() -> dict[str, Any]:
+    monitor = get_control_plane_monitor()
+    return {"count": len(monitor.recent_load_events()), "events": monitor.recent_load_events()}
+
+
+@app.get("/api/v1/admin/load-matches/recent", tags=["admin"])
+async def admin_recent_load_matches() -> dict[str, Any]:
+    monitor = get_control_plane_monitor()
+    return {"count": len(monitor.recent_match_results()), "events": monitor.recent_match_results()}
+
+
+@app.post("/api/v1/admin/force-match", tags=["admin"])
+async def admin_force_match(
+    payload: ForceMatchRequest,
+    producer: VahanSyncProducer = Depends(get_producer),
+) -> dict[str, Any]:
+    if payload.load_id:
+        city = resolve_city(payload.origin) if payload.origin else None
+        pickup_lat = payload.pickup_lat if payload.pickup_lat is not None else (city["lat"] if city else None)
+        pickup_lng = payload.pickup_lng if payload.pickup_lng is not None else (city["lng"] if city else None)
+
+        if pickup_lat is None or pickup_lng is None:
+            raise HTTPException(status_code=400, detail="Unable to resolve pickup coordinates")
+
+        event = {
+            "loadId": payload.load_id,
+            "pickupLat": pickup_lat,
+            "pickupLng": pickup_lng,
+            "origin": payload.origin,
+            "destination": payload.destination,
+            "weightTons": payload.weight_tons,
+            "source": "admin-force-match",
+            "requestedAt": datetime.utcnow().isoformat() + "Z",
+        }
+        ok = await producer.publish(
+            topic=settings.TOPIC_LOAD_EVENTS,
+            payload=event,
+            key=payload.load_id,
+        )
+        logger.info("Kafka event produced | topic=%s | key=%s | source=admin-force-match", settings.TOPIC_LOAD_EVENTS, payload.load_id)
+        return {"status": "queued" if ok else "degraded", "load_id": payload.load_id, "event": event}
+
+    if not payload.origin or not payload.destination:
+        raise HTTPException(status_code=400, detail="origin and destination are required when load_id is absent")
+
+    published = await persist_load_and_publish_event(
+        origin_city=payload.origin,
+        destination_city=payload.destination,
+        weight_tons=payload.weight_tons,
+        producer=producer,
+        reference_seed=f"admin-force-match:{uuid.uuid4()}",
+        source="admin-force-match",
+    )
+    if published is None:
+        raise HTTPException(status_code=400, detail="Unable to create or queue load event")
+    logger.info("Kafka event produced | topic=%s | key=%s | source=admin-force-match", published.topic, published.key)
+    return {"status": "queued", "load_id": published.key, "event": published.payload}
+
+
+@app.get("/api/v1/admin/health", tags=["admin"])
+async def admin_health(
+    producer: VahanSyncProducer = Depends(get_producer),
+) -> dict[str, Any]:
+    monitor = get_control_plane_monitor()
+    return await collect_health_snapshot(producer, monitor)
 
 
 # ===========================================================================

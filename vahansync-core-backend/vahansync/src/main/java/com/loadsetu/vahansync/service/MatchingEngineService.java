@@ -53,12 +53,8 @@ public class MatchingEngineService {
             UUID loadId
     ) {
         if (loadId == null || nearbyTrucks == null || nearbyTrucks.isEmpty()) {
-            return List.of();
-        }
-
-        Load load = loadRepository.findById(loadId).orElse(null);
-        if (load == null) {
-            log.warn("Load not found for matching: {}", loadId);
+            log.warn("findBestMatches early exit: loadId={} nearbyTrucks={}",
+                    loadId, nearbyTrucks == null ? "null" : nearbyTrucks.size());
             return List.of();
         }
 
@@ -68,6 +64,34 @@ public class MatchingEngineService {
                 continue;
             }
             unique.putIfAbsent(truckState.truckId(), truckState);
+        }
+
+        // ── DEBUG: status distribution before filtering ──────────────
+        Map<String, Long> statusCounts = new HashMap<>();
+        long eligibleCount = 0;
+        long staleCount = 0;
+        for (TruckState ts : unique.values()) {
+            String ns = normalizeStatus(ts.status());
+            statusCounts.merge(ns, 1L, Long::sum);
+            if (isEligible(ts)) eligibleCount++;
+            if (ts.lastUpdated() != null) {
+                long age = Duration.between(ts.lastUpdated(), Instant.now()).getSeconds();
+                if (age > DEAD_SECONDS) staleCount++;
+            }
+        }
+        log.info("findBestMatches: loadId={} unique_trucks={} eligible={} stale(>{}s)={} status_dist={}",
+                loadId, unique.size(), eligibleCount, DEAD_SECONDS, staleCount, statusCounts);
+        // ─────────────────────────────────────────────────────────────
+
+        Load load = loadRepository.findById(loadId).orElse(null);
+        if (load == null) {
+            log.warn("Load {} not found in DB — building matches without load metadata", loadId);
+            return unique.values().stream()
+                    .filter(this::isEligible)
+                    .map(truckState -> toFallbackMatchCandidate(pickupLat, pickupLng, loadId, truckState))
+                    .sorted((left, right) -> Double.compare(scoreOf(right), scoreOf(left)))
+                    .limit(MAX_MATCHES)
+                    .toList();
         }
 
         return unique.values().stream()
@@ -147,6 +171,41 @@ public class MatchingEngineService {
                 .origin(load.getOriginName())
                 .destination(load.getDestinationName())
                 .payoutInr(load.getPayoutInr())
+                .deadheadKm(distanceKm)
+                .confidenceScore(Math.max(score, 0.0))
+                .build();
+    }
+
+    private Dtos.MatchCandidate toFallbackMatchCandidate(
+            double pickupLat,
+            double pickupLng,
+            UUID loadId,
+            TruckState truckState
+    ) {
+        double distanceKm = haversineKm(pickupLat, pickupLng, truckState.lat(), truckState.lng());
+        String normalizedStatus = normalizeStatus(truckState.status());
+
+        double score = BASE_SCORE;
+        score -= (distanceKm * 2.5);
+        double reliabilityScore = Math.max(0, 100.0 - (truckState.noShowCount() * 10.0));
+        score += reliabilityScore * 0.2;
+        score -= (truckState.noShowCount() * 15.0);
+        if ("EMPTY_RETURN".equals(normalizedStatus)) {
+            score += 75.0;
+            if (distanceKm < 20.0) score += 50.0;
+        } else if ("AVAILABLE".equals(normalizedStatus)) {
+            score += 20.0;
+        }
+        if (truckState.lastUpdated() != null) {
+            long ageSeconds = Duration.between(truckState.lastUpdated(), Instant.now()).getSeconds();
+            if (ageSeconds < FRESH_SECONDS) score += 20.0;
+            else if (ageSeconds < RECENT_SECONDS) score += 10.0;
+            else if (ageSeconds > STALE_SECONDS) score -= 20.0;
+        }
+
+        return Dtos.MatchCandidate.builder()
+                .truckId(truckState.truckId())
+                .loadId(loadId)
                 .deadheadKm(distanceKm)
                 .confidenceScore(Math.max(score, 0.0))
                 .build();

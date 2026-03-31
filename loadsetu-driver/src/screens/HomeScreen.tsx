@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Animated,
   FlatList,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -10,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
+import Geolocation from 'react-native-background-geolocation';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { useDriverProfile, useNearbyLoads, useRateLimitTimer } from '../hooks/useApi';
@@ -36,7 +38,7 @@ export default function HomeScreen({ navigation }: Props) {
   const [isOnline, setIsOnline] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
   const [voiceState, setVoiceState] = useState<VoiceState>('IDLE');
-  const [location] = useState({ lat: 22.7196, lng: 75.8577 });
+  const [location, setLocation] = useState({ lat: 22.7196, lng: 75.8577 }); // Indore fallback
   const micScale = React.useRef(new Animated.Value(1)).current;
 
   const { data: profile } = useDriverProfile();
@@ -44,6 +46,15 @@ export default function HomeScreen({ navigation }: Props) {
   const { cooldownSec, isRateLimited } = useRateLimitTimer();
 
   useEffect(() => {
+    // Get current position on mount
+    Geolocation.getCurrentPosition({ timeout: 15, maximumAge: 30_000 })
+      .then((loc) => {
+        setLocation({ lat: loc.coords.latitude, lng: loc.coords.longitude });
+      })
+      .catch(() => {
+        // Keep fallback location if GPS not available yet
+      });
+
     const unsub = NetInfo.addEventListener((state) => {
       setIsOnline(!!state.isConnected && !!state.isInternetReachable);
     });
@@ -99,7 +110,7 @@ export default function HomeScreen({ navigation }: Props) {
         </View>
         {!isOnline && (
           <View style={s.offlineBadge}>
-            <Text style={s.offlineText}>Offline{pendingCount > 0 ? ` • ${pendingCount} queued` : ''}</Text>
+            <Text style={s.offlineText}>Offline{pendingCount > 0 ? ` ï¿½ ${pendingCount} queued` : ''}</Text>
           </View>
         )}
       </View>
