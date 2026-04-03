@@ -195,6 +195,10 @@ export function useSocketListener(
 
   useEffect(() => {
     const wrapped = (msg: WSMessage) => cbRef.current(msg);
-    return telemetrySocket.addListener(wrapped);
+
+    const unsubscribe = telemetrySocket.addListener(wrapped);
+    return () => {
+      unsubscribe();
+    };
   }, []);
 }

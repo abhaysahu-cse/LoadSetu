@@ -47,3 +47,4 @@ node_modules/
 .env.local
 dist/
 build/
+google-services.json

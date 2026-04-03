@@ -8,9 +8,13 @@ import { useAuthStore } from "@/store";
 import { useUIStore } from "@/store";
 
 const SPRING_URL =
-  process.env.NEXT_PUBLIC_SPRING_URL ?? "http://localhost:8080";
+  typeof window === "undefined"
+    ? process.env.NEXT_PUBLIC_SPRING_URL ?? "http://localhost:8080"
+    : "/api/spring";
 const FASTAPI_URL =
-  process.env.NEXT_PUBLIC_FASTAPI_URL ?? "http://localhost:8000";
+  typeof window === "undefined"
+    ? process.env.NEXT_PUBLIC_FASTAPI_URL ?? "http://localhost:8000"
+    : "/api/ai";
 
 function generateRequestId(): string {
   return crypto.randomUUID();
@@ -57,7 +61,7 @@ function buildClient(baseURL: string): AxiosInstance {
       if (!response) {
         useUIStore
           .getState()
-          .addToast("Network error — check your connection", "error");
+          .addToast("Request blocked or network error", "error");
         return Promise.reject(error);
       }
 

@@ -69,7 +69,7 @@ spring:
 
 # ─── JWT ─────────────────────────────────────────────────────────────────────
 jwt:
-  secret: ${JWT_SECRET:REPLACE_WITH_512_BIT_BASE64_SECRET_IN_PRODUCTION}
+  secret: ${JWT_SECRET:bG9jYWxfdGVzdF9rZXlfbXVzdF9iZV8zMl9ieXRlc19sb25nXzEyMzQ1}
   expiration-ms: 86400000
 
 # ─── Kafka Topics ─────────────────────────────────────────────────────────────

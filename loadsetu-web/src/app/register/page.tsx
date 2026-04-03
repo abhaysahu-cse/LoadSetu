@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { springClient } from "@/lib/api/client";
+import axios from "axios";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -12,19 +12,41 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  function normalizePhone(input: string) {
+    const cleaned = input.replace(/[^0-9]/g, "");
+    if (cleaned.length === 10) {
+      return "+91" + cleaned;
+    }
+    if (cleaned.length === 12 && cleaned.startsWith("91")) {
+      return "+" + cleaned;
+    }
+    return input;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError(null);
+
+    const normalizedPhone = normalizePhone(phone);
+
     try {
-      await springClient.post("/api/v1/auth/register-shipper", {
-        phone,
+      await axios.post("/api/auth/register-shipper", {
+        phone: normalizedPhone,
         password,
         companyName,
       });
       router.replace("/login");
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? "Registration failed");
+    } catch (unknownError: unknown) {
+      const err = unknownError as { response?: { status?: number; data?: any; headers?: any } };
+      if (err.response?.status === 409) {
+        const backendMessage = err.response?.data?.message || err.response?.data?.error;
+        setError(backendMessage || "Phone number already registered. Try logging in with this number.");
+        return;
+      }
+      const requestId = err.response?.headers?.["x-request-id"];
+      const message = err.response?.data?.message ?? err.response?.data?.error ?? "Registration failed";
+      setError(requestId ? `${message} [reqId: ${requestId}]` : message);
     } finally {
       setLoading(false);
     }

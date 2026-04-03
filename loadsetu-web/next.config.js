@@ -55,11 +55,11 @@ const nextConfig = {
     return [
       {
         source: "/api/spring/:path*",
-        destination: `${process.env.NEXT_PUBLIC_SPRING_URL}/api/:path*`,
+        destination: `${process.env.NEXT_PUBLIC_SPRING_URL}/:path*`,
       },
       {
         source: "/api/ai/:path*",
-        destination: `${process.env.NEXT_PUBLIC_FASTAPI_URL}/api/:path*`,
+        destination: `${process.env.NEXT_PUBLIC_FASTAPI_URL}/:path*`,
       },
     ];
   },

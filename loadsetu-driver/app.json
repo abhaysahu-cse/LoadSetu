@@ -5,18 +5,8 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "loadsetu",
-    "icon": "./assets/icon.png",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0d0d1a"
-    },
     "android": {
       "package": "in.loadsetu.driver",
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0d0d1a"
-      },
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
@@ -29,40 +19,10 @@
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE"
       ],
-      "googleServicesFile": "./google-services.json",
-      "intentFilters": [
-        {
-          "action": "VIEW",
-          "autoVerify": true,
-          "data": [
-            { "scheme": "loadsetu" },
-            { "scheme": "https", "host": "app.loadsetu.in", "pathPrefix": "/load" },
-            { "scheme": "https", "host": "app.loadsetu.in", "pathPrefix": "/match" },
-            { "scheme": "https", "host": "app.loadsetu.in", "pathPrefix": "/booking" }
-          ],
-          "category": ["BROWSABLE", "DEFAULT"]
-        }
-      ]
-    },
-    "ios": {
-      "bundleIdentifier": "in.loadsetu.driver",
-      "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "LoadSetu needs location to show you nearby loads.",
-        "NSLocationAlwaysUsageDescription": "LoadSetu tracks your trip so shippers can see your truck.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "LoadSetu tracks your trip so shippers can see your truck.",
-        "NSMicrophoneUsageDescription": "LoadSetu uses the mic so you can search loads by voice.",
-        "UIBackgroundModes": ["location", "fetch", "remote-notification"]
-      }
+      "googleServicesFile": "./google-services.json"
     },
     "plugins": [
-      [
-        "react-native-background-geolocation",
-        {
-          "license": "YOUR_LICENSE_KEY_HERE"
-        }
-      ],
-      "@react-native-firebase/app",
-      "@react-native-firebase/messaging"
+      "react-native-background-geolocation"
     ]
   }
 }
