@@ -2,6 +2,9 @@
 const nextConfig = {
   reactStrictMode: true,
 
+  // ── Docker standalone output ──────────────────────────────────
+  output: 'standalone',
+
   // ── Mapbox GL requires this worker loader fix ────────────────
   webpack: (config, { isServer }) => {
     if (!isServer) {
