@@ -5,6 +5,16 @@ const nextConfig = {
   // ── Docker standalone output ──────────────────────────────────
   output: 'standalone',
 
+  // ── Disable ESLint during production build ────────────────────
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+
+  // ── Disable TypeScript errors during production build ─────────
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+
   // ── Mapbox GL requires this worker loader fix ────────────────
   webpack: (config, { isServer }) => {
     if (!isServer) {

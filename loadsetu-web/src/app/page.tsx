@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion, useInView, useMotionValue, useSpring, AnimatePresence } from "framer-motion";
+import { motion, useInView, useMotionValue, useSpring } from "framer-motion";
 import {
   MessageCircle, Zap, TruckIcon, ArrowRight, Shield,
-  MapPin, CheckCircle2, ChevronRight, Star, IndianRupee,
+  CheckCircle2, ChevronRight, Star, IndianRupee,
   Wifi, Activity, Navigation
 } from "lucide-react";
 
@@ -49,8 +49,11 @@ function CountUp({ value, prefix = "", suffix = "" }: { value: number; prefix?: 
   const motionVal = useMotionValue(0);
   const spring = useSpring(motionVal, { stiffness: 60, damping: 18 });
   const [display, setDisplay] = useState(0);
-  useEffect(() => { motionVal.set(value); }, [value]);
-  useEffect(() => spring.on("change", (v) => setDisplay(Math.round(v))), [spring]);
+  useEffect(() => { motionVal.set(value); }, [value, motionVal]);
+  useEffect(() => {
+    const unsubscribe = spring.on("change", (v) => setDisplay(Math.round(v)));
+    return () => unsubscribe();
+  }, [spring]);
   return (
     <span>
       {prefix}{display.toLocaleString("en-IN")}{suffix}
@@ -172,7 +175,7 @@ function RoiCalculator() {
           Live ROI Calculator
         </p>
         <h3 className="text-2xl md:text-3xl font-bold text-white mb-8">
-          See How Much You're Losing
+          See How Much You&apos;re Losing
         </h3>
 
         <div className="space-y-7 mb-10">
@@ -323,7 +326,7 @@ export default function LandingPage() {
               <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-4 py-1.5 mb-6">
                 <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
                 <span className="text-emerald-400 text-xs font-semibold tracking-wide uppercase">
-                  India's First AI Freight Exchange
+                  India&apos;s First AI Freight Exchange
                 </span>
               </div>
             </Reveal>
@@ -463,7 +466,7 @@ export default function LandingPage() {
               <span className="text-rose-400">Burning Your Margin</span>
             </h2>
             <p className="text-slate-400 leading-relaxed mb-8">
-              India loses billions every year to empty truck runs. You don't need to be a statistic.
+              India loses billions every year to empty truck runs. You don&apos;t need to be a statistic.
               Our AI matches your truck before it finishes unloading.
             </p>
             <div className="space-y-3">
