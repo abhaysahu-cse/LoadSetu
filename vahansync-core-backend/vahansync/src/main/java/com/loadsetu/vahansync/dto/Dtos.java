@@ -124,6 +124,12 @@ public final class Dtos {
         private List<MatchCandidate> matches;
     }
 
+    @Data @NoArgsConstructor @AllArgsConstructor @Builder
+    public static class LoadMatchesResponse {
+        @JsonProperty("loadId") private UUID loadId;
+        @JsonProperty("matches") private List<MatchCandidate> matches;
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  V4 — SINGLE LOAD CREATION (Next.js Dashboard → Spring Boot)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -410,5 +416,12 @@ public final class Dtos {
         private Double  lng;
         private Double  speedKmh;
         private Instant timestamp;
+    }
+
+    @Data @NoArgsConstructor @AllArgsConstructor @Builder
+    public static class LoadEvent {
+        @JsonProperty("loadId") private UUID loadId;
+        @JsonProperty("pickupLat") private Double pickupLat;
+        @JsonProperty("pickupLng") private Double pickupLng;
     }
 }
