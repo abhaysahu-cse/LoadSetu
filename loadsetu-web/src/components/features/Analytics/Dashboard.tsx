@@ -27,9 +27,9 @@ function SkeletonRow() {
   );
 }
 
-function MetricCard({ label, value, sub, color, bg, sparkData, sparkColor }: {
+function MetricCard({ label, value, sub, color, bg }: {
   label: string; value: string; sub: string;
-  color: string; bg: string; sparkData?: number[]; sparkColor?: string;
+  color: string; bg: string;
 }) {
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
@@ -41,7 +41,7 @@ function MetricCard({ label, value, sub, color, bg, sparkData, sparkColor }: {
   );
 }
 
-function PricingRow({ entry, max }: { entry: PricingLogEntry; max: number }) {
+function PricingRow({ entry }: { entry: PricingLogEntry }) {
   const delta = entry.acceptedPriceInr - entry.suggestedPriceInr;
   return (
     <tr className="border-b border-slate-800/40 hover:bg-slate-900/30 transition-colors">
@@ -106,7 +106,7 @@ export default function AnalyticsDashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {isLoading ? Array(4).fill(0).map((_, i) => <SkeletonCard key={i} />) : (
           <>
-            <MetricCard label="Total Earnings" value={`₹${((kpis?.totalEarnings ?? 0) / 100_000).toFixed(1)}L`} sub="across all bookings" color="text-emerald-400" bg="bg-emerald-500/8" sparkData={earningsSeries} sparkColor="#10b981" />
+            <MetricCard label="Total Earnings" value={`₹${((kpis?.totalEarnings ?? 0) / 100_000).toFixed(1)}L`} sub="across all bookings" color="text-emerald-400" bg="bg-emerald-500/8" />
             <MetricCard label="Acceptance Rate" value={`${Math.round(acceptanceRate * 100)}%`} sub={`${acceptedLogs.length} / ${logs?.length ?? 0} impressions`} color="text-blue-400" bg="bg-blue-500/8" />
             <MetricCard label="Avg AI Confidence" value={`${Math.round(avgConfidence * 100)}%`} sub="VahanSync match score" color="text-amber-400" bg="bg-amber-500/8" />
             <MetricCard label="Deadhead Recovered" value={`${Math.round(totalDeadheadSaved)} km`} sub="from accepted matches" color="text-violet-400" bg="bg-violet-500/8" />
@@ -154,7 +154,7 @@ export default function AnalyticsDashboard() {
             <tbody>
               {logsLoading ? Array(6).fill(0).map((_, i) => <SkeletonRow key={i} />) :
                 (logs ?? []).slice(0, 50).map((entry) => (
-                  <PricingRow key={entry.id} entry={entry} max={maxSuggested} />
+                  <PricingRow key={entry.id} entry={entry} />
                 ))
               }
             </tbody>

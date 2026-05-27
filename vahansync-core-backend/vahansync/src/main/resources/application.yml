@@ -7,10 +7,9 @@ spring:
 
   # ─── Neon Cloud PostgreSQL + PostGIS ────────────────────────────────────────
   datasource:
-    # url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:vahansync_db}?sslmode=require
-    url: jdbc:postgresql://localhost:5433/vahansync_db
-    username: vahansync
-    password: vahansync_secret
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:vahansync_db}
+    username: ${DB_USER:vahansync}
+    password: ${DB_PASS:vahansync_secret}
     hikari:
       maximum-pool-size: 20
       minimum-idle: 5
@@ -32,11 +31,11 @@ spring:
   # MODULE 8: timeout=2000ms — triggers fail-open if Upstash is unreachable
   data:
     redis:
-      host: localhost
-      port: 6379
-      password: 
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
       ssl:
-        enabled: false   # true for Upstash (rediss://), false for local Docker
+        enabled: ${REDIS_SSL:false}
       timeout: 2000ms
       connect-timeout: 1000ms
       lettuce:
