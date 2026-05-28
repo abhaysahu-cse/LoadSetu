@@ -3,9 +3,22 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
+import { useAuthStore } from "@/store";
+
+type RegisterErrorShape = {
+  response?: {
+    status?: number;
+    data?: {
+      message?: string;
+      error?: string;
+    };
+    headers?: Record<string, string | undefined>;
+  };
+};
 
 export default function RegisterPage() {
   const router = useRouter();
+  const setAuth = useAuthStore((state) => state.setAuth);
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [companyName, setCompanyName] = useState("");
@@ -31,14 +44,27 @@ export default function RegisterPage() {
     const normalizedPhone = normalizePhone(phone);
 
     try {
-      await axios.post("/api/auth/register-shipper", {
+      const response = await axios.post("/api/auth/register-shipper", {
         phone: normalizedPhone,
         password,
         companyName,
       });
-      router.replace("/login");
+
+      // Extract auth data from response
+      const { token, user_id, role, company_name } = response.data;
+
+      // Store auth data in Zustand store
+      setAuth({
+        token,
+        fleetId: user_id,
+        fleetName: company_name,
+        userRole: role as "FLEET_OWNER" | "SHIPPER" | "ADMIN",
+      });
+
+      // Redirect to dashboard instead of login
+      router.replace("/loads");
     } catch (unknownError: unknown) {
-      const err = unknownError as { response?: { status?: number; data?: any; headers?: any } };
+      const err = unknownError as RegisterErrorShape;
       if (err.response?.status === 409) {
         const backendMessage = err.response?.data?.message || err.response?.data?.error;
         setError(backendMessage || "Phone number already registered. Try logging in with this number.");
@@ -57,7 +83,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/70 p-8 shadow-2xl shadow-black/30">
         <p className="text-emerald-400 text-sm font-semibold tracking-[0.2em] uppercase mb-3">LoadSetu</p>
         <h1 className="text-3xl font-black text-white tracking-tight">Create shipper account</h1>
-        <p className="text-slate-400 mt-3 text-sm">This registers directly against the new Spring backend.</p>
+        <p className="text-slate-400 mt-3 text-sm">Register and get instant access to your dashboard.</p>
 
         <form onSubmit={handleSubmit} className="space-y-4 mt-8">
           <input
@@ -91,8 +117,15 @@ export default function RegisterPage() {
             disabled={loading}
             className="w-full rounded-2xl bg-emerald-500 px-4 py-3 font-bold text-white transition hover:bg-emerald-400 disabled:opacity-50"
           >
-            {loading ? "Creating..." : "Create account"}
+            {loading ? "Creating account..." : "Create account & Continue"}
           </button>
+
+          <p className="text-center text-sm text-slate-500 mt-4">
+            Already have an account?{" "}
+            <a href="/login" className="text-emerald-400 hover:text-emerald-300 font-semibold">
+              Sign in
+            </a>
+          </p>
         </form>
       </div>
     </main>
