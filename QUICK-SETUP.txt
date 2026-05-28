@@ -1,0 +1,70 @@
+LoadSetu - Quick Setup Commands for EC2
+========================================
+
+Copy and paste these commands one by one:
+
+# 1. Install Docker (if needed)
+sudo apt update && sudo apt install -y docker.io docker-compose && sudo systemctl start docker && sudo systemctl enable docker && sudo usermod -aG docker $USER && newgrp docker
+
+# 2. Clone repository
+git clone https://github.com/abhaysahu-cse/LoadSetu.git
+cd LoadSetu
+
+# 3. Create environment file
+cp .env.production.example .env.production
+
+# 4. Edit environment file (IMPORTANT: Set your passwords and API keys)
+nano .env.production
+# Press Ctrl+X, then Y, then Enter to save
+
+# 5. Build and start all services (takes 10-15 minutes first time)
+docker-compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+
+# 6. Check if all services are running
+docker-compose --env-file .env.production -f docker-compose.prod.yml ps
+
+# 7. View logs (optional)
+docker-compose --env-file .env.production -f docker-compose.prod.yml logs -f
+
+# 8. Test health endpoints
+curl http://localhost:8080/actuator/health
+curl http://localhost:8000/health
+curl http://localhost:3000/api/health
+
+# 9. Access the application
+# Open browser: http://YOUR_EC2_PUBLIC_IP:3000
+
+
+IMPORTANT ENVIRONMENT VARIABLES TO SET:
+---------------------------------------
+In .env.production file, you MUST change:
+
+DB_PASS=your_strong_password_here
+JWT_SECRET=your_64_byte_base64_secret_here
+INTERNAL_API_SECRET=your_32_char_secret_here
+GEMINI_API_KEY=your_gemini_api_key_here
+
+(Optional for production features:)
+RAZORPAY_KEY_ID=your_razorpay_key
+RAZORPAY_KEY_SECRET=your_razorpay_secret
+TWILIO_ACCOUNT_SID=your_twilio_sid
+TWILIO_AUTH_TOKEN=your_twilio_token
+
+
+TROUBLESHOOTING:
+----------------
+# If something fails, restart:
+docker-compose --env-file .env.production -f docker-compose.prod.yml down
+docker-compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+
+# Check specific service logs:
+docker-compose --env-file .env.production -f docker-compose.prod.yml logs -f backend
+docker-compose --env-file .env.production -f docker-compose.prod.yml logs -f ml-engine
+docker-compose --env-file .env.production -f docker-compose.prod.yml logs -f web
+
+
+EXPECTED RESULT:
+----------------
+After 10-15 minutes, all services should be "healthy"
+You can access the web app at: http://YOUR_EC2_IP:3000
+Demo account: +919999999999 / Test@123
