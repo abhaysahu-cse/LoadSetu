@@ -1,0 +1,182 @@
+LoadSetu - EC2 Setup Instructions
+==================================
+
+Prerequisites:
+- EC2 instance with Ubuntu 20.04+ (t3.large or better recommended)
+- Docker and Docker Compose installed
+- Git installed
+- Ports 80, 443, 3000, 8080, 8000 open in security group
+
+Step 1: Install Docker (if not already installed)
+--------------------------------------------------
+sudo apt update
+sudo apt install -y docker.io docker-compose
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER
+newgrp docker
+
+
+Step 2: Clone Repository
+-------------------------
+git clone https://github.com/abhaysahu-cse/LoadSetu.git
+cd LoadSetu
+
+
+Step 3: Configure Environment Variables
+----------------------------------------
+cp .env.production.example .env.production
+nano .env.production
+
+# Edit the following variables:
+# - DB_PASS (set a strong password)
+# - JWT_SECRET (must be 64 bytes base64 encoded)
+# - INTERNAL_API_SECRET (set a strong secret)
+# - GEMINI_API_KEY (your Gemini API key)
+# - RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET (if using payments)
+# - TWILIO credentials (if using WhatsApp)
+
+# Save and exit (Ctrl+X, then Y, then Enter)
+
+
+Step 4: Build and Start All Services
+-------------------------------------
+docker-compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+
+# This will:
+# - Build all Docker images (backend, ml-engine, web)
+# - Start PostgreSQL, Redis, Kafka, Zookeeper
+# - Start backend, ml-engine, web, nginx
+# - Run database migrations automatically
+# - Create Kafka topics automatically
+
+
+Step 5: Verify Deployment
+--------------------------
+# Check all containers are running and healthy
+docker-compose --env-file .env.production -f docker-compose.prod.yml ps
+
+# Expected output: All services should show "Up" and "healthy"
+
+
+Step 6: Check Logs (if needed)
+-------------------------------
+# View all logs
+docker-compose --env-file .env.production -f docker-compose.prod.yml logs -f
+
+# View specific service logs
+docker-compose --env-file .env.production -f docker-compose.prod.yml logs -f backend
+docker-compose --env-file .env.production -f docker-compose.prod.yml logs -f ml-engine
+docker-compose --env-file .env.production -f docker-compose.prod.yml logs -f web
+
+
+Step 7: Verify Services are Working
+------------------------------------
+# Backend health check
+curl http://localhost:8080/actuator/health
+
+# ML Engine health check
+curl http://localhost:8000/health
+
+# Web frontend health check
+curl http://localhost:3000/api/health
+
+# All should return healthy status
+
+
+Step 8: Access the Application
+-------------------------------
+# If using domain name, access via:
+http://your-domain.com
+
+# If using EC2 public IP, access via:
+http://your-ec2-public-ip
+
+# Web App: http://your-server/
+# Backend API: http://your-server:8080
+# ML Engine: http://your-server:8000
+
+
+Step 9: Test Registration and Login
+------------------------------------
+# Open browser and go to: http://your-server:3000
+# Click "Register" and create a new shipper account
+# After registration, you should be automatically logged in
+# You should see the dashboard with loads
+
+
+Troubleshooting Commands
+-------------------------
+# If containers fail to start:
+docker-compose --env-file .env.production -f docker-compose.prod.yml down
+docker-compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+
+# If database connection fails:
+docker exec -it loadsetu-postgres psql -U vahansync -d vahansync_db
+
+# If Kafka topics are not created:
+docker exec -it loadsetu-kafka kafka-topics --list --bootstrap-server localhost:9092
+
+# Check container resource usage:
+docker stats
+
+# Restart specific service:
+docker-compose --env-file .env.production -f docker-compose.prod.yml restart backend
+
+# View real-time logs:
+docker-compose --env-file .env.production -f docker-compose.prod.yml logs -f --tail=100
+
+
+Stop All Services
+-----------------
+docker-compose --env-file .env.production -f docker-compose.prod.yml down
+
+
+Stop and Remove All Data (CAUTION: This deletes database)
+----------------------------------------------------------
+docker-compose --env-file .env.production -f docker-compose.prod.yml down -v
+
+
+Update Application (after git pull)
+------------------------------------
+git pull origin main
+docker-compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+
+
+Important Notes
+---------------
+1. First build will take 10-15 minutes (downloads images, builds code)
+2. Backend takes 60-90 seconds to start (runs migrations)
+3. All services must be "healthy" before accessing the app
+4. Demo data (100 loads) is automatically seeded
+5. Default demo account: +919999999999 / Test@123
+
+
+Port Mapping
+------------
+- 80: Nginx (HTTP)
+- 443: Nginx (HTTPS)
+- 3000: Web Frontend
+- 8080: Backend API
+- 8000: ML Engine
+- 5432: PostgreSQL
+- 6379: Redis
+- 9092: Kafka
+
+
+Security Recommendations
+------------------------
+1. Change all default passwords in .env.production
+2. Use strong JWT_SECRET (64+ characters)
+3. Enable firewall and restrict ports
+4. Set up SSL certificates for HTTPS
+5. Use environment-specific credentials
+6. Never commit .env.production to git
+
+
+Need Help?
+----------
+- Check logs: docker-compose logs -f [service-name]
+- Check README.md for detailed documentation
+- Check DEPLOYMENT-GUIDE.md for advanced configuration
+- Email: support@loadsetu.in
