@@ -65,14 +65,18 @@ const nextConfig = {
 
   // ── Rewrite so frontend can call backends without exposing URLs ─
   async rewrites() {
+    // Use internal Docker service URLs for server-side proxying
+    const springBackend = process.env.SPRING_BACKEND_URL || process.env.NEXT_PUBLIC_SPRING_URL || 'http://localhost:8080';
+    const fastApiBackend = process.env.FASTAPI_BACKEND_URL || process.env.NEXT_PUBLIC_FASTAPI_URL || 'http://localhost:8000';
+    
     return [
       {
         source: "/api/spring/:path*",
-        destination: `${process.env.NEXT_PUBLIC_SPRING_URL}/:path*`,
+        destination: `${springBackend}/api/v1/:path*`,
       },
       {
         source: "/api/ai/:path*",
-        destination: `${process.env.NEXT_PUBLIC_FASTAPI_URL}/:path*`,
+        destination: `${fastApiBackend}/api/v1/:path*`,
       },
     ];
   },
