@@ -11,6 +11,7 @@ export const qk = {
   trucks: ["trucks"] as const,
   truck: (id: string) => ["trucks", id] as const,
   matches: (truckId: string) => ["matches", truckId] as const,
+  loadMatches: (loadId: string) => ["load-matches", loadId] as const,
   analytics: (range: string) => ["analytics", range] as const,
   pricingLogs: ["pricing-logs"] as const,
   demand: ["demand-heatmap"] as const,
@@ -136,6 +137,21 @@ export interface LoadRecord {
   createdAt: string;
 }
 
+export interface LoadTruckMatch {
+  truck_id: string;
+  load_id?: string;
+  origin?: string;
+  destination?: string;
+  payout_inr: number;
+  deadhead_km: number;
+  confidence_score: number;
+}
+
+export interface LoadMatchesResponse {
+  loadId: string;
+  matches: LoadTruckMatch[];
+}
+
 export interface DemandHeatmapCell {
   h3Index: string;
   lat: number;
@@ -161,7 +177,7 @@ export function useFleetTrucks(options?: Partial<UseQueryOptions<Truck[]>>) {
   return useQuery<Truck[]>({
     queryKey: qk.trucks,
     queryFn: async () => {
-      const res = await get<{ count: number; trucks: Truck[] }>(aiClient, "/api/v1/admin/trucks/live");
+      const res = await get<{ count: number; trucks: Truck[] }>(aiClient, "/admin/trucks/live");
       return res.trucks;
     },
     staleTime: 10_000,
@@ -185,7 +201,7 @@ export function useLoadMatches(req: MatchRequest | null) {
   return useQuery<{ matches: LoadMatch[] }>({
     queryKey: qk.matches(req?.truck_id ?? ""),
     queryFn: () =>
-      post<{ matches: LoadMatch[] }>(aiClient, "/api/v1/loads/match", req),
+      post<{ matches: LoadMatch[] }>(aiClient, "/loads/match", req),
     enabled: !!req,
     staleTime: 60_000,
     retry: 2,
@@ -196,7 +212,7 @@ export function useBookLoad() {
   const qc = useQueryClient();
   return useMutation<BookingResponse, Error, BookingRequest>({
     mutationFn: (data) =>
-      post<BookingResponse>(springClient, "/api/v1/bookings", data),
+      post<BookingResponse>(springClient, "/bookings", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.bookings });
     },
@@ -254,7 +270,7 @@ export function useCreateLoad() {
   const qc = useQueryClient();
   return useMutation<CreateLoadResponse, Error, CreateLoadRequest>({
     mutationFn: (data) =>
-      post<CreateLoadResponse>(springClient, "/api/v1/loads", data),
+      post<CreateLoadResponse>(springClient, "/loads", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.myLoads });
     },
@@ -265,15 +281,27 @@ export function useMyLoads() {
   return useQuery<LoadRecord[]>({
     queryKey: qk.myLoads,
     queryFn: () =>
-      get<LoadRecord[]>(springClient, "/api/v1/loads/my-loads"),
+      get<LoadRecord[]>(springClient, "/loads/my-loads"),
     staleTime: 30_000,
+  });
+}
+
+export function useLoadTruckMatches(loadId: string | null) {
+  return useQuery<LoadMatchesResponse>({
+    queryKey: qk.loadMatches(loadId ?? ""),
+    queryFn: () =>
+      get<LoadMatchesResponse>(springClient, `/matches/${loadId}`),
+    enabled: !!loadId,
+    staleTime: 10_000,
+    refetchInterval: loadId ? 15_000 : false,
+    retry: 1,
   });
 }
 
 export function useMe() {
   return useQuery<UserProfile>({
     queryKey: qk.me,
-    queryFn: () => get<UserProfile>(springClient, "/api/v1/users/me"),
+    queryFn: () => get<UserProfile>(springClient, "/users/me"),
     staleTime: 10 * 60_000,
   });
 }
@@ -291,7 +319,7 @@ export function useBulkIngestConfirm() {
     mutationFn: ({ loads }) =>
       post<BulkIngestResponse>(
         springClient,
-        "/api/v1/loads/bulk",
+        "/loads/bulk",
         { loads }
       ),
     onSuccess: () => {
@@ -317,6 +345,6 @@ export interface LoginResponse {
 export function useLogin() {
   return useMutation<LoginResponse, Error, LoginRequest>({
     mutationFn: (data) =>
-      post<LoginResponse>(springClient, "/api/v1/auth/login", data),
+      post<LoginResponse>(springClient, "/auth/login", data),
   });
 }
