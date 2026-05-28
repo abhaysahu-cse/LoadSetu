@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const SPRING_URL = process.env.NEXT_PUBLIC_SPRING_URL ?? "http://localhost:8080";
+// Use server-side env var for API routes (not NEXT_PUBLIC_ which is client-side)
+const SPRING_URL = process.env.SPRING_BACKEND_URL ?? process.env.NEXT_PUBLIC_SPRING_URL ?? "http://localhost:8080";
 
 export async function POST(request: NextRequest) {
   const payload = await request.json();
