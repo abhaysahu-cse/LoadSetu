@@ -93,7 +93,7 @@ export const useAuthStore = create<AuthStore>()(
     {
       name: "loadsetu-auth",
       // Store only non-sensitive metadata; token goes into sessionStorage
-      storage: createJSONStorage(() => sessionStorage),
+      storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         fleetId: state.fleetId,
         fleetName: state.fleetName,

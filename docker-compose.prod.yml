@@ -313,6 +313,12 @@ services:
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost}
         NEXT_PUBLIC_H3_HEATMAP_DEFAULT: ${NEXT_PUBLIC_H3_HEATMAP_DEFAULT:-true}
     container_name: loadsetu-web
+    environment:
+        NEXT_PUBLIC_SPRING_URL: http://backend:8080
+        NEXT_PUBLIC_FASTAPI_URL: http://ml-engine:8000
+        NEXT_PUBLIC_WS_URL: ws://localhost/ws/notifications
+        NEXT_PUBLIC_APP_URL: http://100.26.141.203
+
     restart: unless-stopped
     depends_on:
       backend:
@@ -329,6 +335,8 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+
 
   # ── Nginx Reverse Proxy ───────────────────────────────────────────────────
   nginx:
