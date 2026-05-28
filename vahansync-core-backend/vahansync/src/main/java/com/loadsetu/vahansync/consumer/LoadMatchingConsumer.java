@@ -69,6 +69,7 @@ public class LoadMatchingConsumer {
         }
 
         try {
+            log.info("[MATCH START] loadId={}", event.loadId());
             // Index load for clustering (non-blocking, best-effort)
             loadClusterService.indexLoad(event.loadId(), event.pickupLat(), event.pickupLng());
 
@@ -115,6 +116,7 @@ public class LoadMatchingConsumer {
 
             publishMatches(event.loadId(), matches);
             long t5 = System.nanoTime();
+            log.info("[MATCH COMPLETE] loadId={} count={}", event.loadId(), matches.size());
 
             // Performance telemetry
             log.info("⚡ Match cycle load={} | trucks_found={} matches={} nearby_loads={} | "
@@ -133,11 +135,23 @@ public class LoadMatchingConsumer {
 
     private LoadEvent parseEvent(String payload) {
         try {
-            return objectMapper.readValue(payload, LoadEvent.class);
+            return objectMapper.readValue(normalizePayload(payload), LoadEvent.class);
         } catch (Exception ex) {
             log.warn("Failed to parse load event JSON: {}", ex.getMessage());
             return null;
         }
+    }
+
+    private String normalizePayload(String payload) throws Exception {
+        if (payload == null) {
+            return "{}";
+        }
+
+        String trimmed = payload.trim();
+        if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+            return objectMapper.readValue(trimmed, String.class);
+        }
+        return trimmed;
     }
 
     private List<MatchingEngineService.TruckState> loadTruckStates(

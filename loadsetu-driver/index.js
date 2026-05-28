@@ -13,7 +13,6 @@ import { name as appName } from './app.json';
 // Called when app is in background or killed.
 // DO NOT update UI here — use local notifications instead.
 messaging().setBackgroundMessageHandler(async (remoteMessage) => {
-  console.log('[FCM] Background message:', remoteMessage.messageId);
 
   // Event types from backend (Spring Boot → FCM)
   const { type, loadId, bookingId } = remoteMessage.data ?? {};

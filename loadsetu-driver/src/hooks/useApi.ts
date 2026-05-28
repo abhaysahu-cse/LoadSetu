@@ -5,9 +5,14 @@ import { persistQueryClient } from '@tanstack/react-query-persist-client';
 import {
   acceptLoad,
   AppLoad,
+  createLoad,
   fetchDriverProfile,
   fetchLoadById,
+  fetchLoadMatches,
+  fetchMyLoads,
   fetchNearbyLoads,
+  LoadTruckMatch,
+  LoadDraft,
 } from '../api/endpoints';
 import { loadCache } from '../services/offline.service';
 import { getRateLimitCooldown } from '../api/client';
@@ -35,15 +40,25 @@ const QK = {
   nearbyLoads: (lat: number, lng: number) => ['loads', 'nearby', lat, lng] as const,
   load: (id: string) => ['loads', id] as const,
   driverProfile: () => ['driver', 'profile'] as const,
+  myLoads: () => ['loads', 'mine'] as const,
+  loadMatches: (loadId: string) => ['loads', 'matches', loadId] as const,
 };
 
 export function useNearbyLoads(lat: number, lng: number, enabled = true) {
   return useQuery({
     queryKey: QK.nearbyLoads(lat, lng),
     queryFn: async () => {
-      const loads = await fetchNearbyLoads(lat, lng);
-      await loadCache.saveAll(loads as any);
-      return loads;
+      try {
+        const loads = await fetchNearbyLoads(lat, lng);
+        await loadCache.saveAll(loads as any);
+        return loads;
+      } catch (err: any) {
+        if (err?.type === 'NETWORK_ERROR') {
+          const cached = await loadCache.getAll();
+          return cached as AppLoad[];
+        }
+        throw err;
+      }
     },
     enabled,
     refetchInterval: enabled ? 60000 : false,
@@ -77,6 +92,35 @@ export function useAcceptLoad() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['loads'] });
     },
+  });
+}
+
+export function useMyLoads(enabled = true) {
+  return useQuery({
+    queryKey: QK.myLoads(),
+    queryFn: fetchMyLoads,
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateLoad() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (draft: LoadDraft) => createLoad(draft),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK.myLoads() });
+    },
+  });
+}
+
+export function useLoadMatches(loadId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: QK.loadMatches(loadId ?? ''),
+    queryFn: (): Promise<LoadTruckMatch[]> => fetchLoadMatches(loadId ?? ''),
+    enabled: enabled && !!loadId,
+    staleTime: 15_000,
+    refetchInterval: enabled && !!loadId ? 15_000 : false,
   });
 }
 

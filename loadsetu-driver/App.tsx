@@ -12,6 +12,7 @@ import { initDeepLinking, RootStackParamList, setNavigator } from './src/navigat
 import { getStoredSession } from './src/api/endpoints';
 import { getJwt, setUnauthorizedHandler } from './src/api/client';
 import { requestNotificationPermission, syncDeviceToken, watchFcmTokenRefresh } from './src/services/fcm.service';
+import { initializeNetworkConfig } from './src/services/network.service';
 
 import HomeScreen from './src/screens/HomeScreen';
 import LoadDetailScreen from './src/screens/LoadDetailScreen';
@@ -32,57 +33,75 @@ export default function App() {
     let cleanupDeepLink: (() => void) | undefined;
     let cleanupSync: (() => void) | undefined;
     let cleanupFcmRefresh: (() => void) | undefined;
+    let cleanupForegroundMessage: (() => void) | undefined;
+    let mounted = true;
 
     (async () => {
-      await initDatabase();
-      cleanupSync = startOfflineSyncWatcher();
+      try {
+        await initializeNetworkConfig();
+        await initDatabase();
+        cleanupSync = startOfflineSyncWatcher();
 
-      const jwt = await getJwt();
-      const session = await getStoredSession();
-      if (jwt && session) {
-        setInitialRoute('Home');
-        if (session.truckId) {
-          await initGps(session.truckId);
+        const jwt = await getJwt();
+        const session = await getStoredSession();
+        if (jwt && session) {
+          if (mounted) {
+            setInitialRoute('Home');
+          }
+          if (session.truckId) {
+            await initGps(session.truckId);
+          }
+        }
+
+        setUnauthorizedHandler(() => {
+          navRef.current?.reset({ index: 0, routes: [{ name: 'Login' }] });
+        });
+
+        await requestNotificationPermission();
+        cleanupFcmRefresh = watchFcmTokenRefresh();
+
+        if (jwt) {
+          try {
+            await syncDeviceToken();
+          } catch {
+            console.warn('[FCM] Initial sync failed');
+          }
+        }
+
+        cleanupForegroundMessage = messaging().onMessage(async (remoteMessage) => {
+          const rawLoadId = remoteMessage.data?.loadId;
+          const loadId = typeof rawLoadId === 'string' ? rawLoadId : undefined;
+          if (loadId) {
+            Alert.alert('New Load Alert', 'A new load is available near you.', [
+              { text: 'Later' },
+              { text: 'Open', onPress: () => navRef.current?.navigate('LoadDetail', { loadId }) },
+            ]);
+          }
+        });
+
+        if (navRef.current) {
+          setNavigator(navRef.current);
+        }
+        cleanupDeepLink = await initDeepLinking();
+      } catch (error) {
+        console.warn('[BOOT] App initialization failed', error);
+        Alert.alert(
+          'Startup Issue',
+          'The app could not finish initialization. Check network settings and try again.',
+        );
+      } finally {
+        if (mounted) {
+          setBooting(false);
         }
       }
-
-      setUnauthorizedHandler(() => {
-        navRef.current?.reset({ index: 0, routes: [{ name: 'Login' }] });
-      });
-
-      await requestNotificationPermission();
-      cleanupFcmRefresh = watchFcmTokenRefresh();
-
-      if (jwt) {
-        try {
-          await syncDeviceToken();
-        } catch (error) {
-          console.warn('[FCM] Initial sync failed', error);
-        }
-      }
-
-      messaging().onMessage(async (remoteMessage) => {
-        const rawLoadId = remoteMessage.data?.loadId;
-        const loadId = typeof rawLoadId === 'string' ? rawLoadId : undefined;
-        if (loadId) {
-          Alert.alert('New Load Alert', 'A new load is available near you.', [
-            { text: 'Later' },
-            { text: 'Open', onPress: () => navRef.current?.navigate('LoadDetail', { loadId }) },
-          ]);
-        }
-      });
-
-      if (navRef.current) {
-        setNavigator(navRef.current);
-      }
-      cleanupDeepLink = await initDeepLinking();
-      setBooting(false);
     })();
 
     return () => {
+      mounted = false;
       cleanupDeepLink?.();
       cleanupSync?.();
       cleanupFcmRefresh?.();
+      cleanupForegroundMessage?.();
     };
   }, []);
 

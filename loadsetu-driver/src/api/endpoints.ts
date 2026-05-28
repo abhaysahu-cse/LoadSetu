@@ -1,7 +1,22 @@
-import { fastapiClient, offlineSafePatch, offlineSafePost, saveJwt, springClient, withRetry } from './client';
+import { Platform } from 'react-native';
+import { clearJwt, fastapiClient, offlineSafePatch, offlineSafePost, saveJwt, springClient, withRetry } from './client';
 import { clearSession, getSession, saveSession } from '../services/session.service';
 
 export interface LoginPayload {
+  phone: string;
+  password: string;
+}
+
+export interface DriverRegistrationPayload {
+  fullName: string;
+  phone: string;
+  password: string;
+  truckNumber: string;
+  capacity: number;
+}
+
+export interface ShipperRegistrationPayload {
+  companyName: string;
   phone: string;
   password: string;
 }
@@ -26,6 +41,18 @@ export interface DriverProfile {
   truckNumber?: string | null;
   truckType?: string | null;
   currentStatus?: string | null;
+}
+
+export interface LoadDraft {
+  originName: string;
+  originLat: number;
+  originLng: number;
+  destinationName: string;
+  destLat: number;
+  destLng: number;
+  requiredCapacity: number;
+  payoutInr: number;
+  pickupTime: string;
 }
 
 interface BackendUserProfile {
@@ -56,13 +83,6 @@ interface BackendNearbyLoad {
   distanceKm?: number;
 }
 
-interface BackendMapLoad {
-  id: string;
-  lat: number;
-  lng: number;
-  payoutInr: number;
-}
-
 interface BackendLoadDetail {
   id: string;
   originName: string;
@@ -71,6 +91,15 @@ interface BackendLoadDetail {
   payoutInr: number;
   pickupTime: string;
   status: string;
+  createdAt?: string;
+}
+
+interface BackendCreateLoadResponse {
+  loadId: string;
+  originName: string;
+  destinationName: string;
+  status: string;
+  createdAt: string;
 }
 
 export interface AppLoad {
@@ -84,6 +113,7 @@ export interface AppLoad {
   expiresAt: string;
   distanceKm: number;
   pickupTime: string;
+  status?: string;
 }
 
 interface BackendBookingResponse {
@@ -98,6 +128,29 @@ export interface BookingResponse {
   status: string;
   confirmedAt: string;
   message: string;
+}
+
+export interface CreatedLoad {
+  loadId: string;
+  originName: string;
+  destinationName: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface LoadTruckMatch {
+  truck_id: string;
+  load_id?: string;
+  origin?: string;
+  destination?: string;
+  payout_inr: number;
+  deadhead_km: number;
+  confidence_score: number;
+}
+
+interface BackendLoadMatchesResponse {
+  loadId: string;
+  matches: LoadTruckMatch[];
 }
 
 interface PaymentOrderResponse {
@@ -122,8 +175,8 @@ export interface TelemetryPayload {
   truckId: string;
   lat: number;
   lng: number;
-  speed: number;
-  heading: number;
+  speedKmh: number;
+  headingDegrees: number;
   timestamp: string;
 }
 
@@ -159,6 +212,7 @@ function toAppLoad(load: BackendNearbyLoad | BackendLoadDetail): AppLoad {
     expiresAt: load.pickupTime,
     distanceKm: (load as BackendNearbyLoad).distanceKm ?? 0,
     pickupTime: load.pickupTime,
+    status: (load as BackendLoadDetail).status ?? (load as BackendNearbyLoad).status,
   };
 }
 
@@ -168,25 +222,53 @@ function computeDriverMatchFee(offeredPrice: number): number {
   return 299;
 }
 
+async function persistAuth(res: BackendAuthResponse): Promise<void> {
+  await saveJwt(res.token);
+  await saveSession({
+    userId: res.user_id,
+    role: res.role,
+    fullName: res.full_name,
+    truckId: res.truck_id,
+    companyName: res.company_name,
+  });
+}
+
 export async function login(payload: LoginPayload): Promise<DriverProfile> {
-  const res = await springClient.post<BackendAuthResponse>('/api/v1/auth/login', {
+  const res = await withRetry(() => springClient.post<BackendAuthResponse>('/api/v1/auth/login', {
     phone: normalizePhone(payload.phone),
     password: payload.password,
-  });
+  }));
 
-  await saveJwt(res.data.token);
-  await saveSession({
-    userId: res.data.user_id,
-    role: res.data.role,
-    fullName: res.data.full_name,
-    truckId: res.data.truck_id,
-    companyName: res.data.company_name,
-  });
+  await persistAuth(res.data);
+  return fetchDriverProfile();
+}
 
+export async function registerDriver(payload: DriverRegistrationPayload): Promise<DriverProfile> {
+  const res = await withRetry(() => springClient.post<BackendAuthResponse>('/api/v1/auth/register-driver', {
+    phone: normalizePhone(payload.phone),
+    password: payload.password,
+    fullName: payload.fullName.trim(),
+    truckNumber: payload.truckNumber.trim().toUpperCase(),
+    capacity: payload.capacity,
+  }));
+
+  await persistAuth(res.data);
+  return fetchDriverProfile();
+}
+
+export async function registerShipper(payload: ShipperRegistrationPayload): Promise<DriverProfile> {
+  const res = await withRetry(() => springClient.post<BackendAuthResponse>('/api/v1/auth/register-shipper', {
+    phone: normalizePhone(payload.phone),
+    password: payload.password,
+    companyName: payload.companyName.trim(),
+  }));
+
+  await persistAuth(res.data);
   return fetchDriverProfile();
 }
 
 export async function logout(): Promise<void> {
+  await clearJwt();
   await clearSession();
 }
 
@@ -218,34 +300,33 @@ export async function fetchDriverProfile(): Promise<DriverProfile> {
 }
 
 export async function registerDeviceToken(fcmToken: string): Promise<void> {
-  await withRetry(() => springClient.post('/api/v1/users/device-token', { fcmToken }));
+  await withRetry(() => springClient.post('/api/v1/users/device-token', {
+    fcmToken,
+    deviceType: Platform.OS,
+  }));
 }
 
 export async function fetchNearbyLoads(lat: number, lng: number, radiusKm = 50): Promise<AppLoad[]> {
-  const pins = await withRetry(() => springClient.get<BackendMapLoad[]>('/api/v1/loads/map-view', {
-    params: { lat, lng },
+  const response = await withRetry(() => springClient.get<BackendNearbyLoad[]>('/api/v1/loads/nearby', {
+    params: { lat, lng, radius: radiusKm },
   }));
 
-  const details = await Promise.all(
-    pins.data.map(async (pin) => {
-      const detail = await withRetry(() => springClient.get<BackendLoadDetail>(`/api/v1/loads/${pin.id}`));
-      const merged: BackendNearbyLoad = {
-        ...detail.data,
-        originLat: pin.lat,
-        originLng: pin.lng,
-        payoutInr: pin.payoutInr,
-        distanceKm: radiusKm,
-      };
-      return toAppLoad(merged);
-    }),
-  );
-
-  return details;
+  return response.data.map(toAppLoad);
 }
 
 export async function fetchLoadById(loadId: string): Promise<AppLoad> {
   const res = await withRetry(() => springClient.get<BackendLoadDetail>(`/api/v1/loads/${loadId}`));
   return toAppLoad(res.data);
+}
+
+export async function fetchMyLoads(): Promise<AppLoad[]> {
+  const res = await withRetry(() => springClient.get<BackendLoadDetail[]>('/api/v1/loads/my-loads'));
+  return res.data.map(toAppLoad);
+}
+
+export async function fetchLoadMatches(loadId: string): Promise<LoadTruckMatch[]> {
+  const res = await withRetry(() => springClient.get<BackendLoadMatchesResponse>(`/api/v1/matches/${loadId}`));
+  return res.data.matches ?? [];
 }
 
 export async function acceptLoad(load: AppLoad): Promise<BookingResponse | null> {
@@ -275,6 +356,17 @@ export async function acceptLoad(load: AppLoad): Promise<BookingResponse | null>
     status: response.status,
     confirmedAt: response.createdAt,
     message: response.message,
+  };
+}
+
+export async function createLoad(payload: LoadDraft): Promise<CreatedLoad> {
+  const res = await withRetry(() => springClient.post<BackendCreateLoadResponse>('/api/v1/loads', payload));
+  return {
+    loadId: res.data.loadId,
+    originName: res.data.originName,
+    destinationName: res.data.destinationName,
+    status: res.data.status,
+    createdAt: res.data.createdAt,
   };
 }
 
@@ -314,14 +406,34 @@ export async function updateBookingStatus(
 }
 
 export async function sendTelemetry(payload: TelemetryPayload): Promise<void> {
-  await offlineSafePost(fastapiClient, '/api/v1/telemetry', payload, `telemetry_${payload.timestamp}`);
+  await offlineSafePost(
+    fastapiClient,
+    '/api/v1/telemetry',
+    {
+      truck_id: payload.truckId,
+      lat: payload.lat,
+      lng: payload.lng,
+      speed_kmh: payload.speedKmh,
+      heading_degrees: payload.headingDegrees,
+      timestamp: payload.timestamp,
+    },
+    `telemetry_${payload.timestamp}`,
+  );
 }
 
 export async function flushTelemetryBatch(payloads: TelemetryPayload[]): Promise<void> {
-  await withRetry(() => fastapiClient.post('/api/v1/telemetry/batch', { pings: payloads }));
+  await withRetry(() => fastapiClient.post('/api/v1/telemetry/batch', {
+    pings: payloads.map((payload) => ({
+      truck_id: payload.truckId,
+      lat: payload.lat,
+      lng: payload.lng,
+      speed_kmh: payload.speedKmh,
+      heading_degrees: payload.headingDegrees,
+      timestamp: payload.timestamp,
+    })),
+  }));
 }
 
-// TODO: Wire to real voice NLP endpoint when backend supports audio parsing
 export async function parseVoice(_audioUri: string, _mimeType: 'audio/aac' | 'audio/ogg'): Promise<VoiceIntentResponse> {
   return {
     intent: 'UNKNOWN',
@@ -330,4 +442,3 @@ export async function parseVoice(_audioUri: string, _mimeType: 'audio/aac' | 'au
     rawTranscript: '',
   };
 }
-

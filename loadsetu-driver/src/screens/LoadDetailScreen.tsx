@@ -38,7 +38,7 @@ export default function LoadDetailScreen({ route, navigation }: Props) {
 
     Alert.alert(
       'Confirm Load',
-      `${load.origin.city} -> ${load.destination.city}\n?${load.offeredPrice.toLocaleString('en-IN')}`,
+      `${load.origin.city} -> ${load.destination.city}\nRs ${load.offeredPrice.toLocaleString('en-IN')}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -100,7 +100,7 @@ export default function LoadDetailScreen({ route, navigation }: Props) {
 
         <View style={[s.card, s.priceCard]}>
           <Text style={s.priceLabel}>Offered Price</Text>
-          <Text style={s.price}>?{load.offeredPrice.toLocaleString('en-IN')}</Text>
+          <Text style={s.price}>Rs {load.offeredPrice.toLocaleString('en-IN')}</Text>
           <Text style={s.helper}>Payment verification happens before trip unlock.</Text>
         </View>
 

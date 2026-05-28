@@ -1,134 +1,165 @@
-/**
- * LoadSetu — Background GPS Service
- * Uses react-native-background-geolocation (gold standard for RN GPS).
- *
- * Rules:
- *  - Moving   → ping every 20–30 sec
- *  - Idle     → ping every 2–5 min
- *  - Offline  → buffer in SQLite → flush when back online
- *  - Must survive: screen lock, app kill, battery saver
- */
-
-import BackgroundGeolocation, {
-  Location,
-  State,
-} from 'react-native-background-geolocation';
-import { sendTelemetry, flushTelemetryBatch, TelemetryPayload } from '../api/endpoints';
+import BackgroundGeolocation, { Location, State } from 'react-native-background-geolocation';
+import { flushTelemetryBatch, sendTelemetry, TelemetryPayload } from '../api/endpoints';
 import { db } from './offline.service';
 
 let truckId: string | null = null;
+let initialized = false;
+let listeners: Array<{ remove: () => void }> = [];
+let flushInFlight: Promise<void> | null = null;
 
-// ─── Initialise once (call from App.tsx or after login) ─────────────────────
+function toSpeedKmh(speedMetersPerSecond?: number | null): number {
+  if (!speedMetersPerSecond || speedMetersPerSecond < 0) {
+    return 0;
+  }
+
+  return Math.round(speedMetersPerSecond * 3.6 * 10) / 10;
+}
+
+function removeListeners(): void {
+  for (const listener of listeners) {
+    try {
+      listener.remove();
+    } catch {
+      // Ignore duplicate cleanup.
+    }
+  }
+  listeners = [];
+}
+
+async function handleLocation(location: Location): Promise<void> {
+  if (!truckId) {
+    return;
+  }
+
+  const payload: TelemetryPayload = {
+    truckId,
+    lat: location.coords.latitude,
+    lng: location.coords.longitude,
+    speedKmh: toSpeedKmh(location.coords.speed),
+    headingDegrees: location.coords.heading ?? 0,
+    timestamp: new Date(location.timestamp).toISOString(),
+  };
+
+  try {
+    await sendTelemetry(payload);
+  } catch (error) {
+    console.warn('[GPS] Telemetry send failed', error);
+  }
+}
+
+function handleLocationError(errorCode: number): void {
+  console.warn('[GPS] Location error', errorCode);
+}
+
 export async function initGps(driverTruckId: string): Promise<void> {
   truckId = driverTruckId;
 
+  if (initialized) {
+    return;
+  }
+
   await BackgroundGeolocation.ready({
-    // ── Identity ──────────────────────────────────────────────────────────
     logLevel: BackgroundGeolocation.LOG_LEVEL_WARNING,
-
-    // ── Motion detection ─────────────────────────────────────────────────
-    // Moving: ping every 30 sec
-    distanceFilter: 50,          // metres moved before a ping (while moving)
-    stationaryRadius: 25,        // metres — if inside this → stationary mode
-
-    // ── Intervals ────────────────────────────────────────────────────────
-    locationUpdateInterval: 30_000,        // 30s while moving
-    fastestLocationUpdateInterval: 20_000, // never faster than 20s
-    heartbeatInterval: 180,                // ping every 3 min while stationary
-
-    // ── Android Foreground Service (THE PHONE-KILL FIX) ──────────────────
+    distanceFilter: 50,
+    stationaryRadius: 25,
+    locationUpdateInterval: 30_000,
+    fastestLocationUpdateInterval: 20_000,
+    heartbeatInterval: 180,
     foregroundService: true,
     notification: {
-      title: 'LoadSetu — Trip Active',
-      text:  'LoadSetu is tracking your trip for the shipper.',
-      smallIcon: 'ic_notification',        // must exist in drawable/
+      title: 'LoadSetu Trip Active',
+      text: 'LoadSetu is tracking your trip for the shipper.',
       priority: BackgroundGeolocation.NOTIFICATION_PRIORITY_LOW,
     },
-
-    // ── Accuracy ──────────────────────────────────────────────────────────
     desiredAccuracy: BackgroundGeolocation.DESIRED_ACCURACY_HIGH,
     useSignificantChangesOnly: false,
-
-    // ── Persistence ───────────────────────────────────────────────────────
-    // SDK's own buffer — but we also maintain our own SQLite buffer
     maxDaysToPersist: 2,
     maxRecordsToPersist: 500,
-
-    // ── Restart on boot ───────────────────────────────────────────────────
-    startOnBoot: false,           // only start when driver goes ONLINE
-    stopOnTerminate: false,       // survive app kill ← THE CRITICAL FLAG
-    enableHeadless: true,         // Android headless task support
-
-    // ── Power ─────────────────────────────────────────────────────────────
-    preventSuspend: false,        // don't prevent iOS suspension (save battery)
+    startOnBoot: true,
+    stopOnTerminate: false,
+    enableHeadless: true,
+    preventSuspend: false,
     pausesLocationUpdatesAutomatically: true,
-
-    // ── HTTP (SDK's own sync — complementary to ours) ─────────────────────
-    // We handle sync manually via offlineQueue, so disable SDK's built-in HTTP
     url: undefined,
   });
 
-  // ── Location event ──────────────────────────────────────────────────────
-  BackgroundGeolocation.onLocation(handleLocation, handleLocationError);
+  removeListeners();
 
-  // ── Heartbeat (stationary ping) ─────────────────────────────────────────
-  BackgroundGeolocation.onHeartbeat(async (event) => {
-    const loc = await BackgroundGeolocation.getCurrentPosition({ timeout: 15, maximumAge: 60_000 });
-    await handleLocation(loc);
-  });
+  listeners = [
+    BackgroundGeolocation.onLocation(handleLocation, handleLocationError),
+    BackgroundGeolocation.onHeartbeat(async () => {
+      try {
+        const location = await BackgroundGeolocation.getCurrentPosition({
+          timeout: 15,
+          maximumAge: 60_000,
+          samples: 1,
+          persist: false,
+        });
+        await handleLocation(location);
+      } catch (error) {
+        console.warn('[GPS] Heartbeat fetch failed', error);
+      }
+    }),
+    BackgroundGeolocation.onConnectivityChange(async ({ connected }) => {
+      if (connected) {
+        await flushGpsBuffer();
+      }
+    }),
+  ];
 
-  // ── Connectivity restored → flush buffer ────────────────────────────────
-  BackgroundGeolocation.onConnectivityChange(async ({ connected }) => {
-    if (connected) await flushGpsBuffer();
-  });
+  initialized = true;
 }
 
-// ─── Start tracking (call when driver goes ONLINE) ──────────────────────────
 export async function startGps(): Promise<State> {
+  if (!initialized) {
+    throw new Error('GPS is not initialized for this session.');
+  }
+
   return BackgroundGeolocation.start();
 }
 
-// ─── Stop tracking (call when driver goes OFFLINE or trip ends) ─────────────
 export async function stopGps(): Promise<State> {
   return BackgroundGeolocation.stop();
 }
 
-// ─── Handle a GPS fix ───────────────────────────────────────────────────────
-async function handleLocation(location: Location): Promise<void> {
-  if (!truckId) return;
-
-  const payload: TelemetryPayload = {
-    truckId,
-    lat:       location.coords.latitude,
-    lng:       location.coords.longitude,
-    speed:     location.coords.speed     ?? 0,
-    heading:   location.coords.heading   ?? 0,
-    timestamp: new Date(location.timestamp).toISOString(),
-  };
-
-  // Try to send live; if it fails sendTelemetry() enqueues in SQLite
-  await sendTelemetry(payload);
-}
-
-function handleLocationError(errorCode: number): void {
-  console.warn('[GPS] Error', errorCode);
-  // code 0 = location services disabled — we surface this in the UI via DriverStatusBar
-}
-
-// ─── Flush SQLite GPS buffer (called on reconnect) ──────────────────────────
 export async function flushGpsBuffer(): Promise<void> {
-  try {
-    const rows = await db.getAllAsync<{ id: number; payload: string }>(
-      "SELECT id, payload FROM offline_queue WHERE key LIKE 'telemetry_%' ORDER BY id ASC LIMIT 200",
-    );
-    if (rows.length === 0) return;
-
-    const payloads: TelemetryPayload[] = rows.map((r) => JSON.parse(r.payload));
-    await flushTelemetryBatch(payloads);
-
-    const ids = rows.map((r) => r.id).join(',');
-    await db.runAsync(`DELETE FROM offline_queue WHERE id IN (${ids})`);
-  } catch (err) {
-    console.warn('[GPS] Flush failed, will retry next reconnect', err);
+  if (flushInFlight) {
+    return flushInFlight;
   }
+
+  flushInFlight = (async () => {
+    try {
+      const rows = await db.getAllAsync<{ id: number; payload: string }>(
+        "SELECT id, payload FROM offline_queue WHERE key LIKE 'telemetry_%' ORDER BY id ASC LIMIT 200",
+      );
+
+      if (rows.length === 0) {
+        return;
+      }
+
+      const payloads: TelemetryPayload[] = rows.map((row) => JSON.parse(row.payload));
+      await flushTelemetryBatch(payloads);
+
+      const placeholders = rows.map(() => '?').join(', ');
+      await db.runAsync(
+        `DELETE FROM offline_queue WHERE id IN (${placeholders})`,
+        rows.map((row) => row.id),
+      );
+    } catch (error) {
+      console.warn('[GPS] Flush failed', error);
+    }
+  })();
+
+  try {
+    await flushInFlight;
+  } finally {
+    flushInFlight = null;
+  }
+}
+
+export async function teardownGps(): Promise<void> {
+  removeListeners();
+  initialized = false;
+  truckId = null;
+  await BackgroundGeolocation.stop();
 }

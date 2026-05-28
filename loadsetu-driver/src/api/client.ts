@@ -1,14 +1,11 @@
 import axios, { AxiosError, AxiosInstance, AxiosResponse } from 'axios';
-import { Platform } from 'react-native';
 import { v4 as uuidv4 } from 'uuid';
 import * as Keychain from 'react-native-keychain';
 import { offlineQueue } from '../services/offline.service';
 import { clearSession } from '../services/session.service';
+import { getFastApiBaseUrl, getResolvedBaseUrls, getSpringBootBaseUrl } from '../services/network.service';
 
-const LOCAL_HOST = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
-
-export const SPRING_BOOT_BASE = `http://${LOCAL_HOST}:8080`;
-export const FASTAPI_BASE = `http://${LOCAL_HOST}:8000`;
+type ClientKind = 'spring' | 'fastapi';
 
 let rateLimitCooldownUntil: number | null = null;
 let unauthorizedHandler: (() => void) | null = null;
@@ -17,6 +14,7 @@ export const getRateLimitCooldown = () => rateLimitCooldownUntil;
 export const setUnauthorizedHandler = (handler: () => void) => {
   unauthorizedHandler = handler;
 };
+export const getApiBases = getResolvedBaseUrls;
 
 export async function getJwt(): Promise<string | null> {
   try {
@@ -36,19 +34,37 @@ export async function clearJwt(): Promise<void> {
   await clearSession();
 }
 
-function createClient(baseURL: string): AxiosInstance {
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+export function isRetriableError(error: any): boolean {
+  if (!error) {
+    return false;
+  }
+
+  if (error.type === 'NETWORK_ERROR' || error.type === 'TIMEOUT_ERROR') {
+    return true;
+  }
+
+  return error.type === 'API_ERROR' && error.retryable === true;
+}
+
+function createClient(kind: ClientKind): AxiosInstance {
   const instance = axios.create({
-    baseURL,
     timeout: 15000,
     headers: { 'Content-Type': 'application/json' },
   });
 
   instance.interceptors.request.use(async (config) => {
     const jwt = await getJwt();
+    config.baseURL = kind === 'spring' ? getSpringBootBaseUrl() : getFastApiBaseUrl();
     config.headers['X-Request-ID'] = uuidv4();
+
     if (jwt) {
       config.headers['Authorization'] = `Bearer ${jwt}`;
     }
+
     return config;
   });
 
@@ -71,18 +87,32 @@ function createClient(baseURL: string): AxiosInstance {
         };
       }
 
+      if (error.code === 'ECONNABORTED') {
+        throw {
+          type: 'TIMEOUT_ERROR',
+          message: 'Request timed out. Please try again.',
+        };
+      }
+
       if (!error.response) {
-        throw { type: 'NETWORK_ERROR', originalError: error };
+        throw {
+          type: 'NETWORK_ERROR',
+          message: 'Network unavailable. Request queued if supported.',
+          originalError: error,
+        };
       }
 
       const requestId = error.config?.headers?.['X-Request-ID'] ?? 'unknown';
+      const status = error.response.status;
+
       throw {
         type: 'API_ERROR',
-        status: error.response.status,
+        status,
         message: (error.response.data as any)?.message
           ?? (error.response.data as any)?.error
           ?? 'Unknown error',
         requestId,
+        retryable: isRetryableStatus(status),
       };
     },
   );
@@ -90,8 +120,8 @@ function createClient(baseURL: string): AxiosInstance {
   return instance;
 }
 
-export const springClient = createClient(SPRING_BOOT_BASE);
-export const fastapiClient = createClient(FASTAPI_BASE);
+export const springClient = createClient('spring');
+export const fastapiClient = createClient('fastapi');
 
 export async function withRetry<T>(
   fn: () => Promise<T>,
@@ -102,13 +132,15 @@ export async function withRetry<T>(
     try {
       return await fn();
     } catch (err: any) {
-      if (err?.type === 'RATE_LIMIT' || err?.type === 'AUTH_ERROR') {
+      if (err?.type === 'RATE_LIMIT' || err?.type === 'AUTH_ERROR' || !isRetriableError(err)) {
         throw err;
       }
+
       attempt += 1;
       if (attempt > retries) {
         throw err;
       }
+
       await new Promise((resolve) => setTimeout(resolve, baseDelay * 2 ** (attempt - 1)));
     }
   }
@@ -124,7 +156,7 @@ export async function offlineSafePost<T>(
     const res = await withRetry(() => client.post<T>(url, data));
     return res.data;
   } catch (err: any) {
-    if (err?.type === 'NETWORK_ERROR') {
+    if (err?.type === 'NETWORK_ERROR' || err?.type === 'TIMEOUT_ERROR') {
       await offlineQueue.enqueue({
         key: queueKey,
         url,
@@ -133,6 +165,7 @@ export async function offlineSafePost<T>(
       });
       return null;
     }
+
     throw err;
   }
 }
@@ -147,7 +180,7 @@ export async function offlineSafePatch<T>(
     const res = await withRetry(() => client.patch<T>(url, data));
     return res.data;
   } catch (err: any) {
-    if (err?.type === 'NETWORK_ERROR') {
+    if (err?.type === 'NETWORK_ERROR' || err?.type === 'TIMEOUT_ERROR') {
       await offlineQueue.enqueue({
         key: queueKey,
         url,
@@ -157,6 +190,7 @@ export async function offlineSafePatch<T>(
       });
       return null;
     }
+
     throw err;
   }
 }

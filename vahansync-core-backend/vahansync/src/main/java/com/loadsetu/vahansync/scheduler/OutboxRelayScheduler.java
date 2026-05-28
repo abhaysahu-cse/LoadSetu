@@ -81,6 +81,9 @@ public class OutboxRelayScheduler {
             event.setPublishedAt(Instant.now());
             outboxRepository.save(event);
 
+            if ("load-events".equals(event.getTopic())) {
+                log.info("[EVENT PUBLISHED] loadId={} topic={}", event.getAggregateId(), event.getTopic());
+            }
             log.info("Outbox published: id={} topic={} aggregate={}",
                     event.getId(), event.getTopic(), event.getAggregateId());
 

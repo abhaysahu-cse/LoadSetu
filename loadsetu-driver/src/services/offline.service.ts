@@ -1,27 +1,20 @@
-/**
- * LoadSetu — Offline Queue Service (SQLite)
- * The "Rajasthan Rule" implementation.
- *
- * Any failed API call is saved here and retried silently when connectivity returns.
- * Also stores GPS buffer (see gps.service.ts).
- */
-
-import * as SQLite from 'expo-sqlite';
-import { springClient, fastapiClient } from '../api/client';
 import NetInfo from '@react-native-community/netinfo';
+import * as SQLite from 'expo-sqlite';
+import { fastapiClient, isRetriableError, springClient } from '../api/client';
 
 export type QueueClient = 'spring' | 'fastapi';
 
 export interface QueueItem {
-  key: string;          // unique idempotency key  e.g. "accept_loadId_123"
-  url: string;          // relative URL
+  key: string;
+  url: string;
   data: unknown;
   client: QueueClient;
-  method?: 'POST' | 'PATCH' | 'PUT'; // default POST
+  method?: 'POST' | 'PATCH' | 'PUT';
 }
 
-// ─── Database setup ──────────────────────────────────────────────────────────
 export const db = SQLite.openDatabaseSync('loadsetu.db');
+
+let flushPromise: Promise<void> | null = null;
 
 export async function initDatabase(): Promise<void> {
   await db.runAsync(`
@@ -39,8 +32,8 @@ export async function initDatabase(): Promise<void> {
 
   await db.runAsync(`
     CREATE TABLE IF NOT EXISTS load_cache (
-      id       TEXT    PRIMARY KEY,
-      data     TEXT    NOT NULL,
+      id        TEXT    PRIMARY KEY,
+      data      TEXT    NOT NULL,
       cached_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     );
   `);
@@ -55,7 +48,6 @@ export async function initDatabase(): Promise<void> {
   `);
 }
 
-// ─── Offline Queue ───────────────────────────────────────────────────────────
 export const offlineQueue = {
   async enqueue(item: QueueItem): Promise<void> {
     await db.runAsync(
@@ -66,42 +58,59 @@ export const offlineQueue = {
   },
 
   async flush(): Promise<void> {
-    const rows = await db.getAllAsync<{
-      id: number;
-      key: string;
-      url: string;
-      payload: string;
-      client: QueueClient;
-      method: string;
-      attempts: number;
-    }>(
-      "SELECT * FROM offline_queue WHERE key NOT LIKE 'telemetry_%' ORDER BY id ASC",
-    );
+    if (flushPromise) {
+      return flushPromise;
+    }
 
-    for (const row of rows) {
-      const httpClient = row.client === 'fastapi' ? fastapiClient : springClient;
-      const data = JSON.parse(row.payload);
+    flushPromise = (async () => {
+      const rows = await db.getAllAsync<{
+        id: number;
+        key: string;
+        url: string;
+        payload: string;
+        client: QueueClient;
+        method: string;
+        attempts: number;
+      }>(
+        "SELECT * FROM offline_queue WHERE key NOT LIKE 'telemetry_%' ORDER BY id ASC",
+      );
 
-      try {
-        if (row.method === 'PATCH') {
-          await httpClient.patch(row.url, data);
-        } else if (row.method === 'PUT') {
-          await httpClient.put(row.url, data);
-        } else {
-          await httpClient.post(row.url, data);
-        }
-        // Success — remove from queue
-        await db.runAsync('DELETE FROM offline_queue WHERE id = ?', [row.id]);
-      } catch {
-        // Increment attempt count — give up after 10 attempts (stale action)
-        await db.runAsync(
-          'UPDATE offline_queue SET attempts = attempts + 1 WHERE id = ?',
-          [row.id],
-        );
-        if (row.attempts + 1 >= 10) {
+      for (const row of rows) {
+        const httpClient = row.client === 'fastapi' ? fastapiClient : springClient;
+        const data = JSON.parse(row.payload);
+
+        try {
+          if (row.method === 'PATCH') {
+            await httpClient.patch(row.url, data);
+          } else if (row.method === 'PUT') {
+            await httpClient.put(row.url, data);
+          } else {
+            await httpClient.post(row.url, data);
+          }
+
           await db.runAsync('DELETE FROM offline_queue WHERE id = ?', [row.id]);
+        } catch (error: any) {
+          if (!isRetriableError(error)) {
+            await db.runAsync('DELETE FROM offline_queue WHERE id = ?', [row.id]);
+            continue;
+          }
+
+          await db.runAsync(
+            'UPDATE offline_queue SET attempts = attempts + 1 WHERE id = ?',
+            [row.id],
+          );
+
+          if (row.attempts + 1 >= 10) {
+            await db.runAsync('DELETE FROM offline_queue WHERE id = ?', [row.id]);
+          }
         }
       }
+    })();
+
+    try {
+      await flushPromise;
+    } finally {
+      flushPromise = null;
     }
   },
 
@@ -113,7 +122,6 @@ export const offlineQueue = {
   },
 };
 
-// ─── Load cache (for offline browsing of previously seen loads) ──────────────
 export const loadCache = {
   async save(loadId: string, data: unknown): Promise<void> {
     await db.runAsync(
@@ -138,16 +146,16 @@ export const loadCache = {
 
   async getAll(): Promise<unknown[]> {
     const rows = await db.getAllAsync<{ data: string }>('SELECT data FROM load_cache');
-    return rows.map((r) => JSON.parse(r.data));
+    return rows.map((row) => JSON.parse(row.data));
   },
 };
 
-// ─── Auto-flush on reconnect ─────────────────────────────────────────────────
 export function startOfflineSyncWatcher(): () => void {
   const unsubscribe = NetInfo.addEventListener(async (state) => {
     if (state.isConnected && state.isInternetReachable) {
       await offlineQueue.flush();
     }
   });
-  return unsubscribe; // call this in cleanup
+
+  return unsubscribe;
 }

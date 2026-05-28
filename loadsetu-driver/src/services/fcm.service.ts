@@ -16,8 +16,8 @@ export function watchFcmTokenRefresh(): () => void {
   return messaging().onTokenRefresh(async (token) => {
     try {
       await registerDeviceToken(token);
-    } catch (error) {
-      console.warn('[FCM] Token refresh sync failed', error);
+    } catch {
+      console.warn('[FCM] Token refresh sync failed');
     }
   });
 }

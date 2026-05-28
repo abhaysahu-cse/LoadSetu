@@ -66,6 +66,9 @@ public class LoadService {
     @Value("${kafka.topics.booking-events:booking-events}")
     private String bookingEventsTopic;
 
+    @Value("${kafka.topics.load-events:load-events}")
+    private String loadEventsTopic;
+
     // ─────────────────────────────────────────────────────────────────────────
     //  V4: SINGLE LOAD CREATION (Next.js Dashboard)
     // ─────────────────────────────────────────────────────────────────────────
@@ -113,8 +116,10 @@ public class LoadService {
                 .build();
 
         Load saved = loadRepository.save(load);
-        log.info("Single load created: id={} origin={} dest={} shipper={}",
+        log.info("[LOAD CREATED] loadId={} origin={} dest={} shipper={}",
                 saved.getId(), saved.getOriginName(), saved.getDestinationName(), shipperId);
+
+        writeLoadCreatedToOutbox(saved);
 
         return CreateLoadResponse.builder()
                 .loadId(saved.getId())
@@ -411,6 +416,30 @@ public class LoadService {
             outboxRepository.save(outbox);
         } catch (Exception ex) {
             log.error("Outbox write failed for booking={}: {}", booking.getId(), ex.getMessage());
+        }
+    }
+
+    private void writeLoadCreatedToOutbox(Load load) {
+        try {
+            LoadEvent event = LoadEvent.builder()
+                    .loadId(load.getId())
+                    .pickupLat(load.getOriginGeom().getY())
+                    .pickupLng(load.getOriginGeom().getX())
+                    .build();
+
+            OutboxEvent outbox = OutboxEvent.builder()
+                    .aggregateType("Load")
+                    .aggregateId(load.getId())
+                    .topic(loadEventsTopic)
+                    .messageKey(load.getId().toString())
+                    .payload(objectMapper.writeValueAsString(event))
+                    .status(OutboxEvent.OutboxStatus.PENDING)
+                    .retryCount(0)
+                    .build();
+
+            outboxRepository.save(outbox);
+        } catch (Exception ex) {
+            log.error("Outbox write failed for load={}: {}", load.getId(), ex.getMessage());
         }
     }
 

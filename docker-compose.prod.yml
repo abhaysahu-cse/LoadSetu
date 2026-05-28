@@ -1,8 +1,7 @@
 version: "3.9"
 
-# ============================================================================
-# LoadSetu / VahanSync — Production Docker Compose
-# 
+
+
 # This orchestrates the complete production stack:
 # - PostgreSQL + PostGIS (database)
 # - Redis (cache)
@@ -16,7 +15,7 @@ version: "3.9"
 #   docker-compose -f docker-compose.prod.yml up -d
 #   docker-compose -f docker-compose.prod.yml down
 #   docker-compose -f docker-compose.prod.yml logs -f
-# ============================================================================
+
 
 networks:
   loadsetu-network:
@@ -314,12 +313,10 @@ services:
         NEXT_PUBLIC_H3_HEATMAP_DEFAULT: ${NEXT_PUBLIC_H3_HEATMAP_DEFAULT:-true}
     container_name: loadsetu-web
     environment:
-        SPRING_BACKEND_URL: http://backend:8080
-        FASTAPI_BACKEND_URL: http://ml-engine:8000
-        NEXT_PUBLIC_SPRING_URL: http://localhost/api/spring
-        NEXT_PUBLIC_FASTAPI_URL: http://localhost/api/ai
+        NEXT_PUBLIC_SPRING_URL: http://backend:8080
+        NEXT_PUBLIC_FASTAPI_URL: http://ml-engine:8000
         NEXT_PUBLIC_WS_URL: ws://localhost/ws/notifications
-        NEXT_PUBLIC_APP_URL: http://localhost
+        NEXT_PUBLIC_APP_URL: http://100.26.141.203
 
     restart: unless-stopped
     depends_on:
